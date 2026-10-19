@@ -29,13 +29,15 @@ Several files can be dropped at once. If a file with the same name exists, a num
 ## Usage
 
 1. Start Konverter. It lives in the menu bar.
-2. Start dragging one or more files from Finder.
-3. Hold **Shift**. The wheel opens at the cursor.
-4. Drop the files on a format. Dropping on the centre or between segments does nothing.
+2. Drag one or more files from Finder.
+3. While dragging, hold **⇧ Shift** for the conversion wheel, or **⌘ Command** for the image tools wheel (images only). The wheel opens at the cursor.
+4. Drop the files on a segment. The result is saved next to the original.
+
+Dropping on the centre or between segments does nothing. The segment with the file's own format is dimmed.
 
 ## Image tools
 
-Hold **⌘ Command** instead of Shift while dragging an image to open a second wheel:
+The **⌘ Command** wheel has two tools for images:
 
 | Tool | Formats | What it does |
 | --- | --- | --- |
