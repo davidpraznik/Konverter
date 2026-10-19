@@ -1,6 +1,6 @@
 # Konverter
 
-A small macOS menu bar app for converting files. Hold **Shift** while dragging a file, a wheel appears around the cursor, and dropping the file on a segment converts it. The result is saved next to the original.
+A small macOS menu bar app for converting and optimizing files. Hold **Shift** while dragging a file, a wheel appears around the cursor, and dropping the file on a segment converts it. Hold **⌘ Command** instead to compress an image or strip its metadata. The result is saved next to the original.
 
 ## Formats
 
@@ -45,6 +45,10 @@ The app does not use the App Sandbox. Detecting a file drag needs no special per
 ## Opening a downloaded build
 
 Builds from GitHub are not notarized. On first launch, right-click the app, choose **Open**, then confirm.
+
+## About
+
+I am a UX/UI and product designer. I made Konverter for my own needs, as a tool I use every day while working on design and product projects. Many open source tools have helped me deliver my work over the years, so I am sharing this one publicly to give something back. It is free and MIT licensed. Bug reports and ideas are welcome in [Issues](https://github.com/davidpraznik/Konverter/issues).
 
 ## Third-party components
 
