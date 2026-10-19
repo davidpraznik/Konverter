@@ -1,6 +1,7 @@
 import SwiftUI
 import Combine
 import AppKit
+import Compression
 import CoreText
 import AVFoundation
 import ImageIO
@@ -107,15 +108,39 @@ enum VideoFormat: String, CaseIterable, Identifiable {
     var ext: String { rawValue.lowercased() }
 }
 
+enum Tool: String, CaseIterable {
+    case compress = "COMPRESS"
+    case strip = "STRIP METADATA"
+
+    var formats: String {
+        switch self {
+        case .compress: return "PNG · JPG · WEBP · HEIC"
+        case .strip: return "JPG · PNG · HEIC · WEBP"
+        }
+    }
+}
+
+enum WheelMode {
+    case convert, tools
+}
+
 enum Target: Hashable {
     case image(ImageFormat)
     case video(VideoFormat)
+    case tool(Tool)
 
     var label: String {
         switch self {
         case .image(let f): return f.rawValue
         case .video(let f): return f.rawValue
+        case .tool(let t): return t.rawValue
         }
+    }
+
+    // krajša oznaka za sredino kolesa
+    var shortLabel: String {
+        if case .tool(.strip) = self { return "STRIP" }
+        return label
     }
 }
 
@@ -154,9 +179,9 @@ enum Converter {
         }
     }
 
-    nonisolated static func uniqueURL(for source: URL, ext: String) -> URL {
+    nonisolated static func uniqueURL(for source: URL, ext: String, suffix: String = "") -> URL {
         let dir = source.deletingLastPathComponent()
-        let base = source.deletingPathExtension().lastPathComponent
+        let base = source.deletingPathExtension().lastPathComponent + suffix
         var candidate = dir.appendingPathComponent(base).appendingPathExtension(ext)
         var i = 1
         while FileManager.default.fileExists(atPath: candidate.path) {
@@ -174,6 +199,105 @@ enum Converter {
         case .video(let f):
             guard kind(of: url) == .video else { return false }
             return convertVideo(url, to: f)
+        case .tool(let t):
+            guard kind(of: url) == .image else { return false }
+            switch t {
+            case .compress: return compressImage(url)
+            case .strip: return stripMetadata(url)
+            }
+        }
+    }
+
+    // MARK: Orodja (kolo Command)
+
+    nonisolated private static func encode(_ source: CGImageSource, to dest: URL, type: String, quality: Double, keepMetadata: Bool) -> Bool {
+        guard let destination = CGImageDestinationCreateWithURL(dest as CFURL, type as CFString, 1, nil) else { return false }
+        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        if keepMetadata {
+            CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
+        } else {
+            guard let image = loadImage(source) else { return false }
+            CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        }
+        return CGImageDestinationFinalize(destination)
+    }
+
+    // Datoteke, ki jih ni mogoče bolj stisniti (rezultat ni manjši od originala)
+    nonisolated private static let skippedLock = NSLock()
+    nonisolated(unsafe) private static var skippedValue = 0
+
+    nonisolated static var skippedCount: Int {
+        skippedLock.lock()
+        defer { skippedLock.unlock() }
+        return skippedValue
+    }
+
+    nonisolated static func resetSkipped() {
+        skippedLock.lock()
+        skippedValue = 0
+        skippedLock.unlock()
+    }
+
+    nonisolated private static func noteSkipped() {
+        skippedLock.lock()
+        skippedValue += 1
+        skippedLock.unlock()
+    }
+
+    nonisolated private static func fileSize(_ url: URL) -> Int {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    }
+
+    nonisolated private static func keepIfSmaller(_ ok: Bool, dest: URL, original url: URL) -> Bool {
+        guard ok else { return false }
+        let before = fileSize(url)
+        let after = fileSize(dest)
+        if before > 0 && after >= before {
+            try? FileManager.default.removeItem(at: dest)
+            noteSkipped()
+            return false
+        }
+        return true
+    }
+
+    nonisolated private static func compressImage(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        let ext = url.pathExtension.lowercased()
+        let dest = uniqueURL(for: url, ext: ext, suffix: "-compressed")
+        switch ext {
+        case "jpg", "jpeg":
+            return keepIfSmaller(encode(source, to: dest, type: "public.jpeg", quality: 0.7, keepMetadata: true), dest: dest, original: url)
+        case "heic", "heif":
+            return keepIfSmaller(encode(source, to: dest, type: "public.heic", quality: 0.6, keepMetadata: true), dest: dest, original: url)
+        case "webp":
+            guard let image = loadImage(source), let data = encodeWebP(image, quality: 70) else { return false }
+            return keepIfSmaller((try? data.write(to: dest)) != nil, dest: dest, original: url)
+        case "png":
+            guard let image = loadImage(source), let data = PNGCompressor.compress(image) else { return false }
+            let original = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard original == 0 || data.count < original else { noteSkipped(); return false } // ni manjši: ne shranimo
+            return (try? data.write(to: dest)) != nil
+        default:
+            return false
+        }
+    }
+
+    nonisolated private static func stripMetadata(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        let ext = url.pathExtension.lowercased()
+        let dest = uniqueURL(for: url, ext: ext, suffix: "-clean")
+        switch ext {
+        case "jpg", "jpeg":
+            return encode(source, to: dest, type: "public.jpeg", quality: 0.95, keepMetadata: false)
+        case "png":
+            return encode(source, to: dest, type: "public.png", quality: 1.0, keepMetadata: false)
+        case "heic", "heif":
+            return encode(source, to: dest, type: "public.heic", quality: 0.9, keepMetadata: false)
+        case "webp":
+            guard let image = loadImage(source), let data = encodeWebP(image, quality: 90) else { return false }
+            return (try? data.write(to: dest)) != nil
+        default:
+            return false
         }
     }
 
@@ -333,6 +457,377 @@ enum Converter {
     }
 }
 
+// MARK: - PNG: kvantizacija in zapis (kot TinyPNG)
+
+struct PaletteColor {
+    var r: UInt8
+    var g: UInt8
+    var b: UInt8
+    var a: UInt8
+}
+
+enum PNGCompressor {
+    nonisolated static let maxColors = 256
+    nonisolated static let ditherStrength: Float = 0.5
+
+    private struct Entry {
+        var r: UInt8
+        var g: UInt8
+        var b: UInt8
+        var a: UInt8
+        var n: UInt32
+    }
+
+    private struct Box {
+        var start: Int
+        var end: Int
+        var channel: Int
+        var range: Int
+        var score: Double
+    }
+
+    nonisolated static func compress(_ image: CGImage) -> Data? {
+        let w = image.width
+        let h = image.height
+        guard w > 0, h > 0, let px = straightRGBA(image) else { return nil }
+        let count = w * h
+
+        var palette: [PaletteColor]
+        var indices: [UInt8]
+        if let exact = exactPalette(px, count: count) {
+            palette = exact.palette
+            indices = exact.indices
+        } else {
+            palette = medianCut(px, count: count)
+            indices = map(px, width: w, height: h, palette: palette)
+        }
+
+        // neprosojni vnosi na konec, da je blok tRNS čim krajši
+        let order = palette.indices.sorted { l, r in
+            let lt = palette[l].a < 255
+            let rt = palette[r].a < 255
+            if lt != rt { return lt }
+            return l < r
+        }
+        var remap = [UInt8](repeating: 0, count: palette.count)
+        var sorted = [PaletteColor]()
+        for (newIndex, oldIndex) in order.enumerated() {
+            remap[oldIndex] = UInt8(newIndex)
+            sorted.append(palette[oldIndex])
+        }
+        for i in 0..<indices.count { indices[i] = remap[Int(indices[i])] }
+
+        guard let data = writePNG(width: w, height: h, palette: sorted, indices: indices) else { return nil }
+
+        // preverimo, da je rezultat veljavna slika
+        guard let src = CGImageSourceCreateWithData(data as CFData, nil),
+              let check = CGImageSourceCreateImageAtIndex(src, 0, nil),
+              check.width == w, check.height == h else { return nil }
+        return data
+    }
+
+    // MARK: Piksli
+
+    nonisolated private static func straightRGBA(_ image: CGImage) -> [UInt8]? {
+        let w = image.width
+        let h = image.height
+        var px = [UInt8](repeating: 0, count: w * h * 4)
+        let ok: Bool = px.withUnsafeMutableBytes { buf in
+            guard let space = CGColorSpace(name: CGColorSpace.sRGB),
+                  let ctx = CGContext(
+                    data: buf.baseAddress,
+                    width: w,
+                    height: h,
+                    bitsPerComponent: 8,
+                    bytesPerRow: w * 4,
+                    space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                  ) else { return false }
+            ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+            return true
+        }
+        guard ok else { return nil }
+        var i = 0
+        while i < px.count {
+            let a = Int(px[i + 3])
+            if a > 0 && a < 255 {
+                px[i] = UInt8(min(255, Int(px[i]) * 255 / a))
+                px[i + 1] = UInt8(min(255, Int(px[i + 1]) * 255 / a))
+                px[i + 2] = UInt8(min(255, Int(px[i + 2]) * 255 / a))
+            }
+            i += 4
+        }
+        return px
+    }
+
+    // Če ima slika največ 256 barv, ostane popolnoma enaka (brez izgube)
+    nonisolated private static func exactPalette(_ px: [UInt8], count: Int) -> (palette: [PaletteColor], indices: [UInt8])? {
+        var lookup = [UInt32: UInt8]()
+        var palette = [PaletteColor]()
+        var indices = [UInt8](repeating: 0, count: count)
+        for p in 0..<count {
+            let i = p * 4
+            let a = px[i + 3]
+            let key: UInt32 = a == 0
+                ? 0
+                : (UInt32(px[i]) << 24) | (UInt32(px[i + 1]) << 16) | (UInt32(px[i + 2]) << 8) | UInt32(a)
+            if let idx = lookup[key] {
+                indices[p] = idx
+                continue
+            }
+            if palette.count >= maxColors { return nil }
+            let idx = UInt8(palette.count)
+            lookup[key] = idx
+            if a == 0 {
+                palette.append(PaletteColor(r: 0, g: 0, b: 0, a: 0))
+            } else {
+                palette.append(PaletteColor(r: px[i], g: px[i + 1], b: px[i + 2], a: a))
+            }
+            indices[p] = idx
+        }
+        return (palette, indices)
+    }
+
+    // MARK: Median cut
+
+    nonisolated private static func value(_ e: Entry, _ channel: Int) -> Int {
+        switch channel {
+        case 0: return Int(e.r)
+        case 1: return Int(e.g)
+        case 2: return Int(e.b)
+        default: return Int(e.a)
+        }
+    }
+
+    nonisolated private static func makeBox(_ entries: [Entry], _ start: Int, _ end: Int) -> Box {
+        var lo = [255, 255, 255, 255]
+        var hi = [0, 0, 0, 0]
+        var total: UInt64 = 0
+        for k in start..<end {
+            let e = entries[k]
+            total += UInt64(e.n)
+            for c in 0..<4 {
+                let v = value(e, c)
+                if v < lo[c] { lo[c] = v }
+                if v > hi[c] { hi[c] = v }
+            }
+        }
+        var channel = 0
+        var range = 0
+        for c in 0..<4 where hi[c] - lo[c] > range {
+            range = hi[c] - lo[c]
+            channel = c
+        }
+        return Box(start: start, end: end, channel: channel, range: range, score: Double(total) * Double(range))
+    }
+
+    nonisolated private static func medianCut(_ px: [UInt8], count: Int) -> [PaletteColor] {
+        var hist = [UInt32](repeating: 0, count: 1 << 20)
+        for p in 0..<count {
+            let i = p * 4
+            let key = ((Int(px[i]) >> 3) << 15) | ((Int(px[i + 1]) >> 3) << 10) | ((Int(px[i + 2]) >> 3) << 5) | (Int(px[i + 3]) >> 3)
+            hist[key] += 1
+        }
+
+        var entries = [Entry]()
+        for key in 0..<hist.count where hist[key] > 0 {
+            let r = ((key >> 15) & 31) * 8 + 4
+            let g = ((key >> 10) & 31) * 8 + 4
+            let b = ((key >> 5) & 31) * 8 + 4
+            let a = (key & 31) * 8 + 4
+            entries.append(Entry(r: UInt8(r), g: UInt8(g), b: UInt8(b), a: UInt8(min(255, a)), n: hist[key]))
+        }
+        guard !entries.isEmpty else { return [PaletteColor(r: 0, g: 0, b: 0, a: 0)] }
+
+        var boxes = [makeBox(entries, 0, entries.count)]
+        while boxes.count < maxColors {
+            var best = -1
+            var bestScore = 0.0
+            for (i, b) in boxes.enumerated() where b.end - b.start > 1 && b.range > 0 && b.score > bestScore {
+                best = i
+                bestScore = b.score
+            }
+            if best < 0 { break }
+            let b = boxes[best]
+            let ch = b.channel
+            entries[b.start..<b.end].sort { value($0, ch) < value($1, ch) }
+
+            var total: UInt64 = 0
+            for k in b.start..<b.end { total += UInt64(entries[k].n) }
+            var acc: UInt64 = 0
+            var mid = b.start + 1
+            for k in b.start..<(b.end - 1) {
+                acc += UInt64(entries[k].n)
+                mid = k + 1
+                if acc * 2 >= total { break }
+            }
+            boxes[best] = makeBox(entries, b.start, mid)
+            boxes.append(makeBox(entries, mid, b.end))
+        }
+
+        return boxes.map { b in
+            var sr = 0.0, sg = 0.0, sb = 0.0, sa = 0.0, sn = 0.0
+            for k in b.start..<b.end {
+                let e = entries[k]
+                let n = Double(e.n)
+                sr += Double(e.r) * n
+                sg += Double(e.g) * n
+                sb += Double(e.b) * n
+                sa += Double(e.a) * n
+                sn += n
+            }
+            let a = UInt8(min(255.0, (sa / sn).rounded()))
+            return PaletteColor(
+                r: UInt8(min(255.0, (sr / sn).rounded())),
+                g: UInt8(min(255.0, (sg / sn).rounded())),
+                b: UInt8(min(255.0, (sb / sn).rounded())),
+                a: a > 250 ? 255 : a
+            )
+        }
+    }
+
+    // MARK: Preslikava na paleto (Floyd-Steinberg)
+
+    nonisolated private static func map(_ px: [UInt8], width w: Int, height h: Int, palette: [PaletteColor]) -> [UInt8] {
+        var lut = [Int16](repeating: -1, count: 1 << 20)
+        var indices = [UInt8](repeating: 0, count: w * h)
+        var errCur = [Float](repeating: 0, count: (w + 2) * 3)
+        var errNext = [Float](repeating: 0, count: (w + 2) * 3)
+        let strength = ditherStrength
+
+        func nearest(_ r: Int, _ g: Int, _ b: Int, _ a: Int) -> Int {
+            let key = ((r >> 3) << 15) | ((g >> 3) << 10) | ((b >> 3) << 5) | (a >> 3)
+            let cached = lut[key]
+            if cached >= 0 { return Int(cached) }
+            let cr = (r >> 3) * 8 + 4
+            let cg = (g >> 3) * 8 + 4
+            let cb = (b >> 3) * 8 + 4
+            let ca = a
+            var bestIndex = 0
+            var bestDist = Int.max
+            for (i, p) in palette.enumerated() {
+                let dr = cr - Int(p.r)
+                let dg = cg - Int(p.g)
+                let db = cb - Int(p.b)
+                let da = ca - Int(p.a)
+                let d = dr * dr + dg * dg + db * db + da * da * 3
+                if d < bestDist {
+                    bestDist = d
+                    bestIndex = i
+                }
+            }
+            lut[key] = Int16(bestIndex)
+            return bestIndex
+        }
+
+        for y in 0..<h {
+            for x in 0..<w {
+                let i = (y * w + x) * 4
+                let e = (x + 1) * 3
+                let a = Int(px[i + 3])
+                let rf = min(255, max(0, Float(px[i]) + errCur[e]))
+                let gf = min(255, max(0, Float(px[i + 1]) + errCur[e + 1]))
+                let bf = min(255, max(0, Float(px[i + 2]) + errCur[e + 2]))
+                let idx = nearest(Int(rf), Int(gf), Int(bf), a)
+                indices[y * w + x] = UInt8(idx)
+
+                if a > 0 {
+                    let p = palette[idx]
+                    let er = (rf - Float(p.r)) * strength
+                    let eg = (gf - Float(p.g)) * strength
+                    let eb = (bf - Float(p.b)) * strength
+                    errCur[e + 3] += er * 7 / 16
+                    errCur[e + 4] += eg * 7 / 16
+                    errCur[e + 5] += eb * 7 / 16
+                    errNext[e - 3] += er * 3 / 16
+                    errNext[e - 2] += eg * 3 / 16
+                    errNext[e - 1] += eb * 3 / 16
+                    errNext[e] += er * 5 / 16
+                    errNext[e + 1] += eg * 5 / 16
+                    errNext[e + 2] += eb * 5 / 16
+                    errNext[e + 3] += er / 16
+                    errNext[e + 4] += eg / 16
+                    errNext[e + 5] += eb / 16
+                }
+            }
+            swap(&errCur, &errNext)
+            for k in 0..<errNext.count { errNext[k] = 0 }
+        }
+        return indices
+    }
+
+    // MARK: Zapis PNG
+
+    nonisolated private static func be32(_ v: UInt32) -> [UInt8] {
+        [UInt8(v >> 24), UInt8((v >> 16) & 0xFF), UInt8((v >> 8) & 0xFF), UInt8(v & 0xFF)]
+    }
+
+    nonisolated private static let crcTable: [UInt32] = (0..<256).map { n -> UInt32 in
+        var c = UInt32(n)
+        for _ in 0..<8 {
+            c = (c & 1) != 0 ? (0xEDB88320 ^ (c >> 1)) : (c >> 1)
+        }
+        return c
+    }
+
+    nonisolated private static func crcChecksum(_ bytes: [UInt8]) -> UInt32 {
+        var c: UInt32 = 0xFFFFFFFF
+        for b in bytes {
+            c = crcTable[Int((c ^ UInt32(b)) & 0xFF)] ^ (c >> 8)
+        }
+        return c ^ 0xFFFFFFFF
+    }
+
+    nonisolated private static func adlerChecksum(_ bytes: [UInt8]) -> UInt32 {
+        var a: UInt32 = 1
+        var b: UInt32 = 0
+        for v in bytes {
+            a = (a + UInt32(v)) % 65521
+            b = (b + a) % 65521
+        }
+        return (b << 16) | a
+    }
+
+    nonisolated private static func zlibCompress(_ src: [UInt8]) -> [UInt8]? {
+        let capacity = src.count + src.count / 8 + 1024
+        var dst = [UInt8](repeating: 0, count: capacity)
+        let n = compression_encode_buffer(&dst, capacity, src, src.count, nil, COMPRESSION_ZLIB)
+        guard n > 0 else { return nil }
+        var out: [UInt8] = [0x78, 0x9C]
+        out.append(contentsOf: dst[0..<n])
+        out.append(contentsOf: be32(adlerChecksum(src)))
+        return out
+    }
+
+    nonisolated private static func writePNG(width w: Int, height h: Int, palette: [PaletteColor], indices: [UInt8]) -> Data? {
+        var raw = [UInt8]()
+        raw.reserveCapacity((w + 1) * h)
+        for y in 0..<h {
+            raw.append(0)
+            raw.append(contentsOf: indices[(y * w)..<((y + 1) * w)])
+        }
+        guard let z = zlibCompress(raw) else { return nil }
+
+        var out = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
+        func chunk(_ type: String, _ body: [UInt8]) {
+            let t = Array(type.utf8)
+            out.append(contentsOf: be32(UInt32(body.count)))
+            out.append(contentsOf: t)
+            out.append(contentsOf: body)
+            out.append(contentsOf: be32(crcChecksum(t + body)))
+        }
+
+        chunk("IHDR", be32(UInt32(w)) + be32(UInt32(h)) + [8, 3, 0, 0, 0])
+        chunk("PLTE", palette.flatMap { [$0.r, $0.g, $0.b] })
+        if let last = palette.lastIndex(where: { $0.a < 255 }) {
+            chunk("tRNS", palette[0...last].map { $0.a })
+        }
+        chunk("IDAT", z)
+        chunk("IEND", [])
+        return out
+    }
+}
+
 // MARK: - Kolo
 
 final class WheelModel: ObservableObject {
@@ -343,6 +838,7 @@ final class WheelModel: ObservableObject {
     @Published var progress: Double = 0
     @Published var total = 0
     @Published var disabled: Set<Target> = []
+    @Published var mode: WheelMode = .convert
 }
 
 struct Wedge: Shape {
@@ -506,11 +1002,11 @@ struct WheelView: View {
     var body: some View {
         let p = Palette(scheme)
         let u = size / 360
-        let targets = model.kind.targets
+        let targets: [Target] = model.mode == .tools ? Tool.allCases.map { Target.tool($0) } : model.kind.targets
         let hint: String? = model.message.isEmpty && targeted == nil
             ? (overSame ? "SAME FORMAT" : (overCenter ? "NOT HERE!" : "DROP ON…"))
             : nil
-        let centerText = hint ?? (model.message.isEmpty ? (targeted?.label ?? "") : model.message)
+        let centerText = hint ?? (model.message.isEmpty ? (targeted?.shortLabel ?? "") : model.message)
 
         ZStack {
             Circle()
@@ -536,6 +1032,8 @@ struct WheelView: View {
                 .fill(p.wedge)
                 .frame(width: 112 * u, height: 112 * u)
             Text(centerText)
+                .multilineTextAlignment(.center)
+                .lineSpacing(1 * u)
                 .font(inter(hint == nil ? 14 * u : 11 * u))
                 .tracking(hint == nil ? 0 : 0.88 * u)
                 .foregroundStyle(hint == nil ? p.text : p.textDim)
@@ -556,12 +1054,19 @@ struct WheelView: View {
         ))
     }
 
+    private static let cheers = [
+        "LIKE A BOSS!", "NAILED IT!", "SMOOTH!", "DONE!", "BOOM!",
+        "EASY!", "CRISP!", "NICE ONE!", "SORTED!", "FLAWLESS!",
+        "TOO EASY!", "CLEAN!"
+    ]
+
     private func run(_ urls: [URL], _ target: Target) {
         model.chosen = target
         model.busy = true
         model.total = urls.count
         model.progress = 0
         model.message = "…"
+        Converter.resetSkipped()
         DispatchQueue.global(qos: .userInitiated).async {
             var ok = 0
             for (i, url) in urls.enumerated() {
@@ -574,8 +1079,15 @@ struct WheelView: View {
                     }
                 }
             }
+            let skipped = Converter.skippedCount
             DispatchQueue.main.async {
-                model.message = ok == urls.count ? "✓ \(ok)" : "⚠︎ \(ok)/\(urls.count)"
+                if ok == urls.count {
+                    model.message = Self.cheers.randomElement() ?? "DONE!"
+                } else if ok == 0 && skipped == urls.count {
+                    model.message = "ALREADY\nSMALL"
+                } else {
+                    model.message = "⚠︎ \(ok)/\(urls.count)"
+                }
                 model.busy = false
             }
         }
@@ -595,13 +1107,28 @@ struct WheelView: View {
         let shape = Wedge(center: center, slice: slice, outer: outer, inner: inner, gap: 6 * u, corner: 6 * u)
         let r = (outer + inner) / 2
 
+        let px = size / 2 + r * cos(center)
+        let py = size / 2 + r * sin(center)
+
         return ZStack {
             shape.fill(fill)
             shape.stroke(fill, style: StrokeStyle(lineWidth: 12 * u, lineJoin: .round))
-            Text(target.label)
-                .font(inter(15 * u))
-                .foregroundStyle(labelColor)
-                .position(x: size / 2 + r * cos(center), y: size / 2 + r * sin(center))
+            if case .tool(let tool) = target {
+                Text(target.label)
+                    .font(inter(15 * u))
+                    .foregroundStyle(labelColor)
+                    .position(x: px, y: py - 9 * u)
+                Text(tool.formats)
+                    .font(inter(10 * u))
+                    .tracking(0.8 * u)
+                    .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
+                    .position(x: px, y: py + 9 * u)
+            } else {
+                Text(target.label)
+                    .font(inter(15 * u))
+                    .foregroundStyle(labelColor)
+                    .position(x: px, y: py)
+            }
         }
         .frame(width: size, height: size)
         .allowsHitTesting(false)
@@ -739,6 +1266,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideWork: DispatchWorkItem?
     private let wheelSize: CGFloat = 360
     private let panelSize: CGFloat = 420
+    // Tipka za kolo z orodji. Če spust ne deluje, poskusi .option
+    static let toolsModifier: NSEvent.ModifierFlags = .command
     private var settingsWindow: NSWindow?
 
     @MainActor
@@ -776,8 +1305,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if wheelVisible { return }
 
-        let shift = NSEvent.modifierFlags.contains(.shift)
-        guard pb.changeCount != baselineCount, shift else { return }
+        let flags = NSEvent.modifierFlags
+        let shift = flags.contains(.shift)
+        let tools = flags.contains(AppDelegate.toolsModifier) && !shift
+        guard pb.changeCount != baselineCount, shift || tools else { return }
 
         let urls = (pb.readObjects(
             forClasses: [NSURL.self],
@@ -785,7 +1316,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) as? [URL]) ?? []
 
         guard let first = urls.first, let kind = Converter.kind(of: first) else { return }
-        showWheel(kind: kind, urls: urls)
+        if tools && kind != .image { return }
+        showWheel(kind: kind, urls: urls, mode: tools ? .tools : .convert)
     }
 
     private func makePanel() -> NSPanel {
@@ -808,13 +1340,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return p
     }
 
-    private func showWheel(kind: FileKind, urls: [URL]) {
+    private func showWheel(kind: FileKind, urls: [URL], mode: WheelMode) {
         hideWork?.cancel()
         hideWork = nil
         model.kind = kind
+        model.mode = mode
         let formats = Set(urls.compactMap { Converter.format(of: $0) })
         let allKnown = urls.allSatisfy { Converter.format(of: $0) != nil }
-        model.disabled = (allKnown && formats.count == 1) ? formats : []
+        model.disabled = (mode == .convert && allKnown && formats.count == 1) ? formats : []
         model.message = ""
         model.chosen = nil
         model.progress = 0
