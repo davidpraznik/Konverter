@@ -140,6 +140,20 @@ enum Converter {
         return nil
     }
 
+    nonisolated static func format(of url: URL) -> Target? {
+        switch url.pathExtension.lowercased() {
+        case "png": return .image(.png)
+        case "webp": return .image(.webp)
+        case "jpg", "jpeg": return .image(.jpg)
+        case "avif": return .image(.avif)
+        case "heic", "heif": return .image(.heic)
+        case "pdf": return .image(.pdf)
+        case "mp4": return .video(.mp4)
+        case "gif": return .video(.gif)
+        default: return nil
+        }
+    }
+
     nonisolated static func uniqueURL(for source: URL, ext: String) -> URL {
         let dir = source.deletingLastPathComponent()
         let base = source.deletingPathExtension().lastPathComponent
@@ -328,6 +342,7 @@ final class WheelModel: ObservableObject {
     @Published var chosen: Target? = nil
     @Published var progress: Double = 0
     @Published var total = 0
+    @Published var disabled: Set<Target> = []
 }
 
 struct Wedge: Shape {
@@ -387,11 +402,13 @@ struct WheelDropDelegate: DropDelegate {
     let inner: CGFloat
     let gapHalf: CGFloat
     let targets: [Target]
+    let disabled: Set<Target>
     @Binding var targeted: Target?
     @Binding var overCenter: Bool
+    @Binding var overSame: Bool
     let onDrop: ([URL], Target) -> Void
 
-    func target(at p: CGPoint) -> Target? {
+    func segment(at p: CGPoint) -> Target? {
         let n = targets.count
         guard n > 0 else { return nil }
         let slice = 2 * CGFloat.pi / CGFloat(n)
@@ -410,6 +427,16 @@ struct WheelDropDelegate: DropDelegate {
         return targets[index]
     }
 
+    func target(at p: CGPoint) -> Target? {
+        guard let t = segment(at: p), !disabled.contains(t) else { return nil }
+        return t
+    }
+
+    func isSame(at p: CGPoint) -> Bool {
+        guard let t = segment(at: p) else { return false }
+        return disabled.contains(t)
+    }
+
     func isCenter(at p: CGPoint) -> Bool {
         let dx = p.x - size / 2
         let dy = p.y - size / 2
@@ -423,24 +450,28 @@ struct WheelDropDelegate: DropDelegate {
     func dropEntered(info: DropInfo) {
         targeted = target(at: info.location)
         overCenter = isCenter(at: info.location)
+        overSame = isSame(at: info.location)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         let t = target(at: info.location)
         targeted = t
         overCenter = isCenter(at: info.location)
+        overSame = isSame(at: info.location)
         return DropProposal(operation: t == nil ? .forbidden : .copy)
     }
 
     func dropExited(info: DropInfo) {
         targeted = nil
         overCenter = false
+        overSame = false
     }
 
     func performDrop(info: DropInfo) -> Bool {
         let chosen = target(at: info.location)
         targeted = nil
         overCenter = false
+        overSame = false
         guard let chosenTarget = chosen else { return false }
 
         let providers = info.itemProviders(for: [.fileURL])
@@ -470,13 +501,14 @@ struct WheelView: View {
     @Environment(\.colorScheme) private var scheme
     @State private var targeted: Target? = nil
     @State private var overCenter = false
+    @State private var overSame = false
 
     var body: some View {
         let p = Palette(scheme)
         let u = size / 360
         let targets = model.kind.targets
         let hint: String? = model.message.isEmpty && targeted == nil
-            ? (overCenter ? "NOT HERE!" : "DROP ON…")
+            ? (overSame ? "SAME FORMAT" : (overCenter ? "NOT HERE!" : "DROP ON…"))
             : nil
         let centerText = hint ?? (model.message.isEmpty ? (targeted?.label ?? "") : model.message)
 
@@ -514,8 +546,10 @@ struct WheelView: View {
             inner: 62 * u,
             gapHalf: 3 * u,
             targets: targets,
+            disabled: model.disabled,
             targeted: $targeted,
             overCenter: $overCenter,
+            overSame: $overSame,
             onDrop: { urls, target in
                 run(urls, target)
             }
@@ -553,7 +587,7 @@ struct WheelView: View {
         let outer = 172 * u
         let inner = 62 * u
         let active = targeted == target || model.chosen == target
-        let dimmed = model.busy && model.chosen != target
+        let dimmed = (model.busy && model.chosen != target) || model.disabled.contains(target)
 
         let fill: Color = active ? p.accent : (dimmed ? p.wedgeDim : p.wedge)
         let labelColor: Color = active ? p.ink : (dimmed ? p.textDim : p.text)
@@ -751,7 +785,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) as? [URL]) ?? []
 
         guard let first = urls.first, let kind = Converter.kind(of: first) else { return }
-        showWheel(kind: kind)
+        showWheel(kind: kind, urls: urls)
     }
 
     private func makePanel() -> NSPanel {
@@ -774,10 +808,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return p
     }
 
-    private func showWheel(kind: FileKind) {
+    private func showWheel(kind: FileKind, urls: [URL]) {
         hideWork?.cancel()
         hideWork = nil
         model.kind = kind
+        let formats = Set(urls.compactMap { Converter.format(of: $0) })
+        let allKnown = urls.allSatisfy { Converter.format(of: $0) != nil }
+        model.disabled = (allKnown && formats.count == 1) ? formats : []
         model.message = ""
         model.chosen = nil
         model.progress = 0

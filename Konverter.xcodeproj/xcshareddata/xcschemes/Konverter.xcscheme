@@ -17,6 +17,7 @@
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "000000000000000100000000"
                BuildableName = "Konverter.app"
+               BlueprintName = "Konverter"
                ReferencedContainer = "container:Konverter.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
@@ -46,6 +47,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000100000000"
             BuildableName = "Konverter.app"
+            BlueprintName = "Konverter"
             ReferencedContainer = "container:Konverter.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
@@ -62,6 +64,7 @@
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "000000000000000100000000"
             BuildableName = "Konverter.app"
+            BlueprintName = "Konverter"
             ReferencedContainer = "container:Konverter.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
