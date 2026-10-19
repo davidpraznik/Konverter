@@ -1,4 +1,19 @@
-# Konverter
+<p align="center">
+  <img src="docs/icon.png" width="112" alt="Konverter icon">
+</p>
+
+<h1 align="center">Konverter</h1>
+
+<p align="center">
+  Drag. Drop. Converted.<br>
+  A radial file converter for your macOS menu bar.
+</p>
+
+<p align="center">
+  <a href="https://github.com/davidpraznik/Konverter/releases/latest"><img src="https://img.shields.io/github/v/release/davidpraznik/Konverter?color=6D4AFF&label=release" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-14.6%2B-6D4AFF" alt="macOS 14.6+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-6D4AFF" alt="MIT licence"></a>
+</p>
 
 A small macOS menu bar app for converting and optimizing files. Hold **Shift** while dragging a file, a wheel appears around the cursor, and dropping the file on a segment converts it. Hold **⌘ Command** instead to compress an image or strip its metadata. The result is saved next to the original.
 
