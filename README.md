@@ -1,12 +1,14 @@
 <p align="center">
-  <img src="docs/icon.png" width="112" alt="Konverter icon">
+  <img src="docs/icon.png" width="112" alt="Konverter icon"><br>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.png">
+    <img src="docs/wordmark-light.png" width="240" alt="Konverter">
+  </picture>
 </p>
 
-<h1 align="center">Konverter</h1>
-
 <p align="center">
-  Drag. Drop. Converted.<br>
-  A radial file converter for your macOS menu bar.
+  Hold <b>⇧ Shift</b> while dragging a file to convert it, <b>⌘ Command</b> to compress or strip metadata.<br>
+  Lives in your menu bar. The result is saved next to the original.
 </p>
 
 <p align="center">
@@ -14,8 +16,6 @@
   <img src="https://img.shields.io/badge/macOS-14.6%2B-6D4AFF" alt="macOS 14.6+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-6D4AFF" alt="MIT licence"></a>
 </p>
-
-A small macOS menu bar app for converting and optimizing files. Hold **Shift** while dragging a file, a wheel appears around the cursor, and dropping the file on a segment converts it. Hold **⌘ Command** instead to compress an image or strip its metadata. The result is saved next to the original.
 
 ## Formats
 
