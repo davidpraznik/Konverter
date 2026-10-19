@@ -18,6 +18,15 @@ Several files can be dropped at once. If a file with the same name exists, a num
 3. Hold **Shift**. The wheel opens at the cursor.
 4. Drop the files on a format. Dropping on the centre or between segments does nothing.
 
+## Image tools
+
+Hold **⌘ Command** instead of Shift while dragging an image to open a second wheel:
+
+| Tool | Formats | What it does |
+| --- | --- | --- |
+| Compress | PNG, JPG, WEBP, HEIC | Makes the file smaller and saves `name-compressed.ext`. PNG uses its own colour quantization (up to 256 colours, transparency kept). Files that cannot get smaller are skipped. |
+| Strip metadata | JPG, PNG, HEIC, WEBP | Removes EXIF, location and other metadata. Saves `name-clean.ext`. |
+
 Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases).
 
 ## Requirements
