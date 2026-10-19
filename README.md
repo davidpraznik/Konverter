@@ -27,11 +27,11 @@ Hold **⌘ Command** instead of Shift while dragging an image to open a second w
 | Compress | PNG, JPG, WEBP, HEIC | Makes the file smaller and saves `name-compressed.ext`. PNG uses its own colour quantization (up to 256 colours, transparency kept). Files that cannot get smaller are skipped. |
 | Strip metadata | JPG, PNG, HEIC, WEBP | Removes EXIF, location and other metadata. Saves `name-clean.ext`. |
 
-Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases).
+Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases), with an optional automatic check once a day.
 
 ## Requirements
 
-- macOS 15 or later (check the deployment target in the project)
+- macOS 14.6 or later (tested on macOS 27 only)
 - Xcode to build from source
 
 ## Build
