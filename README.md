@@ -65,7 +65,7 @@ Builds from GitHub are not notarized. On first launch, right-click the app, choo
 
 ## About
 
-I am a UX/UI and product designer. I made Konverter for my own needs, as a tool I use every day while working on design and product projects. Many open source tools have helped me deliver my work over the years, so I am sharing this one publicly to give something back. It is free and MIT licensed. Bug reports and ideas are welcome in [Issues](https://github.com/davidpraznik/Konverter/issues).
+I am a UX/UI and product designer. I made Konverter for my own needs, as a tool I use every day to convert and compress images and video while working on design and product projects. Many open source tools have helped me deliver my work over the years, so I am sharing this one publicly to give something back. It is free and MIT licensed. Bug reports and ideas are welcome in [Issues](https://github.com/davidpraznik/Konverter/issues).
 
 ## Third-party components
 
