@@ -1,9 +1,5 @@
 <p align="center">
-  <img src="docs/icon.png" width="112" alt="Konverter icon"><br>
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="docs/wordmark-dark.png">
-    <img src="docs/wordmark-light.png" width="240" alt="Konverter">
-  </picture>
+  <img src="docs/social-preview.png" alt="Konverter: a radial file converter for the macOS menu bar" width="100%">
 </p>
 
 <p align="center">
