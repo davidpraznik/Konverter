@@ -9,6 +9,17 @@
     {
       "layers" : [
         {
+          "fill-specializations" : [
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "display-p3:0.78824,0.73333,1.00000,1.00000",
+                  "srgb:0.63529,0.55686,1.00000,1.00000"
+                ]
+              }
+            }
+          ],
           "image-name" : "Konverter-wheel.svg",
           "name" : "Konverter-wheel"
         }
