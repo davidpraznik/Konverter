@@ -57,7 +57,13 @@ The app does not use the App Sandbox. Detecting a file drag needs no special per
 
 ## Opening a downloaded build
 
-Builds from GitHub are not notarized. On first launch, right-click the app, choose **Open**, then confirm.
+Builds from GitHub are not notarized, so macOS blocks the app on first launch. To open it:
+
+1. Try to open Konverter once and close the warning.
+2. Open **System Settings > Privacy & Security** and scroll to the bottom.
+3. Click **Open Anyway** next to the message about Konverter, then confirm.
+
+This is needed only once.
 
 ## About
 
