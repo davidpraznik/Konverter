@@ -22,7 +22,7 @@
 | Input | Output |
 | --- | --- |
 | Images | PNG, WEBP, JPG, AVIF, HEIC, PDF |
-| Video | MP4, GIF, M4A |
+| Video | MP4, GIF, M4A (audio only) |
 
 Several files can be dropped at once. If a file with the same name exists, a number is added (`photo (1).webp`).
 
