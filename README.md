@@ -69,6 +69,8 @@ This is needed only once.
 
 I am a UX/UI and product designer. I made Konverter for my own needs, as a tool I use every day to convert and compress images and video while working on design and product projects. Many open source tools have helped me deliver my work over the years, so I am sharing this one publicly to give something back. It is free and MIT licensed. Bug reports and ideas are welcome in [Issues](https://github.com/davidpraznik/Konverter/issues).
 
+Read more (in Slovenian): [Konverter: brezplačna macOS aplikacija za pretvarjanje in stiskanje datotek](https://davidpraznik.com/konverter-pretvornik-datotek-macos/)
+
 ## Third-party components
 
 - [libwebp](https://chromium.googlesource.com/webm/libwebp) (BSD 3-Clause), WebP encoding.
