@@ -27,6 +27,7 @@ Several files can be dropped at once. If a file with the same name exists, a num
 1. Start Konverter. It lives in the menu bar.
 2. Drag one or more files from Finder.
 3. While dragging, hold **⇧ Shift** for the conversion wheel, or **⌘ Command** for the image tools wheel (images only). The wheel opens at the cursor.
+   Switching apps with ⌘ Tab while holding a file opens the tools wheel by accident? Change the tools key to **⇧⌘** in Settings ([details](#tools-key)).
 4. Drop the files on a segment. The result is saved next to the original.
 
 Dropping on the centre or between segments does nothing. The segment with the file's own format is dimmed.
