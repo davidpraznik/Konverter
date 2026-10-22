@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/social-preview-v2.png" alt="Konverter: a radial file converter for the macOS menu bar" width="100%">
+  <img src="docs/social-preview-v3.png" alt="Konverter: a radial file converter for the macOS menu bar" width="100%">
 </p>
 
 <p align="center">
