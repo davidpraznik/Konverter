@@ -1299,9 +1299,31 @@ final class SettingsModel: ObservableObject {
     }
 }
 
+// MARK: - Tipka za kolo z orodji
+
+enum ToolsKey: String, CaseIterable, Identifiable {
+    case command, shiftCommand
+
+    static let storageKey = "toolsKey"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .command: return "⌘ Command"
+        case .shiftCommand: return "⇧⌘ Shift + Command"
+        }
+    }
+
+    static var current: ToolsKey {
+        ToolsKey(rawValue: UserDefaults.standard.string(forKey: storageKey) ?? "") ?? .command
+    }
+}
+
 struct SettingsView: View {
     @StateObject private var model = SettingsModel()
     @ObservedObject private var updates = UpdateChecker.shared
+    @AppStorage(ToolsKey.storageKey) private var toolsKey = ToolsKey.command.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1311,6 +1333,19 @@ struct SettingsView: View {
             ))
 
             Toggle("Check for updates automatically", isOn: $updates.autoCheck)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("Tools key", selection: $toolsKey) {
+                    ForEach(ToolsKey.allCases) { key in
+                        Text(key.label).tag(key.rawValue)
+                    }
+                }
+                .fixedSize()
+                Text("Hold it while dragging images to show the tools wheel. ⇧ Shift alone opens the convert wheel. ⌥ Option and ⌃ Control are used by Archivator.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -1357,8 +1392,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hideWork: DispatchWorkItem?
     private let wheelSize: CGFloat = 360
     private let panelSize: CGFloat = 420
-    // Tipka za kolo z orodji. Če spust ne deluje, poskusi .option
-    static let toolsModifier: NSEvent.ModifierFlags = .command
+    // Shift sam (pri izbiri ⇧⌘) počakamo kratek čas, da se lahko pridruži ⌘
+    private var shiftSince: Date?
+    private let shiftDelay: TimeInterval = 0.15
     private var settingsWindow: NSWindow?
 
     @MainActor
@@ -1391,6 +1427,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !pressed {
             baselineCount = pb.changeCount
+            shiftSince = nil
             if wheelVisible { scheduleHide() }
             return
         }
@@ -1399,8 +1436,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let flags = NSEvent.modifierFlags
         let shift = flags.contains(.shift)
-        let tools = flags.contains(AppDelegate.toolsModifier) && !shift
-        guard pb.changeCount != baselineCount, shift || tools else { return }
+        let command = flags.contains(.command)
+        let tools: Bool
+        let convert: Bool
+        switch ToolsKey.current {
+        case .command:
+            tools = command && !shift
+            convert = shift
+        case .shiftCommand:
+            tools = command && shift
+            if shift && !command {
+                if shiftSince == nil { shiftSince = Date() }
+                convert = Date().timeIntervalSince(shiftSince ?? Date()) >= shiftDelay
+            } else {
+                shiftSince = nil
+                convert = false
+            }
+        }
+        guard pb.changeCount != baselineCount, convert || tools else { return }
 
         let urls = (pb.readObjects(
             forClasses: [NSURL.self],

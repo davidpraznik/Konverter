@@ -40,7 +40,15 @@ The **⌘ Command** wheel has two tools for images:
 | Compress | PNG, JPG, WEBP, HEIC | Makes the file smaller and saves `name-compressed.ext`. PNG uses its own colour quantization (up to 256 colours, transparency kept). Files that cannot get smaller are skipped. |
 | Strip metadata | JPG, PNG, HEIC, WEBP | Removes EXIF, location and other metadata. Saves `name-clean.ext`. |
 
-Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases), with an optional automatic check once a day.
+Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases), with an optional automatic check once a day, and the tools key (see below).
+
+## Tools key
+
+By default the image tools wheel opens when you hold **⌘ Command** while dragging. The catch: if you hold a dragged file and switch apps with **⌘ Tab**, the wheel pops up by accident.
+
+If that bothers you, open **Settings > Tools key** and choose **⇧⌘ Shift + Command**. The tools wheel then needs both keys, so **⌘ Tab** no longer triggers it. **⇧ Shift** alone still opens the conversion wheel (after a short 0.15 s delay, so it does not flash before the tools wheel).
+
+⌥ Option and ⌃ Control are not offered because [Archivator](https://github.com/davidpraznik/Archivator) uses them.
 
 ## Requirements
 
