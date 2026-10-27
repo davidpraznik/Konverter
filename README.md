@@ -4,7 +4,7 @@
 
 <p align="center">
   Hold <b>⇧ Shift</b> while dragging a file to convert it, <b>⌘ Command</b> to prepare images for the web or strip metadata.<br>
-  Lives in your menu bar. The result is saved next to the original.
+  Lives in your menu bar and uses practically no energy while you are not dragging a file. The result is saved next to the original.
 </p>
 
 <p align="center">
@@ -12,6 +12,10 @@
   <img src="https://img.shields.io/badge/macOS-14.6%2B-6D4AFF" alt="macOS 14.6+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-6D4AFF" alt="MIT licence"></a>
 </p>
+
+## Light on your Mac
+
+Konverter does nothing in the background while you work. Its drag detection starts only when you press the mouse button and stops as soon as you release it, so an idle Konverter shows no activity in Activity Monitor and does not drain the battery. It uses CPU only for the moment of a conversion.
 
 ## Formats
 
