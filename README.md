@@ -54,6 +54,10 @@ Menu bar icon, Settings…
 - **Style**: *Glass* (translucent wheel carrier) or *Solid* (the classic look).
 - **For web**: max size (original, 3840, 2560, 1920, 1600, 1280, 1024 or 800 px), quality (Smaller, Balanced, Better), convert to sRGB, remove metadata, and whether the result is saved next to the original or replaces it.
 
+<p align="center">
+  <img src="docs/settings-v1.png" alt="Konverter Settings window" width="380">
+</p>
+
 ## Tools key
 
 By default the image tools wheel opens when you hold **⌘ Command** while dragging. The catch: if you hold a dragged file and switch apps with **⌘ Tab**, the wheel pops up by accident.
