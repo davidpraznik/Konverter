@@ -125,13 +125,11 @@ enum VideoFormat: String, CaseIterable, Identifiable {
 }
 
 enum Tool: String, CaseIterable {
-    case compress = "COMPRESS"
     case web = "FOR WEB"
     case strip = "STRIP METADATA"
 
     var formats: String {
         switch self {
-        case .compress: return "PNG · JPG · WEBP · HEIC"
         case .web:
             let size = WebSettings.maxSide == 0 ? "ORIGINAL" : "\(WebSettings.maxSide) PX"
             return WebSettings.srgb ? "\(size) · SRGB" : size
@@ -229,7 +227,6 @@ enum Converter {
         case .tool(let t):
             guard kind(of: url) == .image else { return false }
             switch t {
-            case .compress: return compressImage(url)
             case .web: return webImage(url)
             case .strip: return stripMetadata(url)
             }
@@ -335,59 +332,6 @@ enum Converter {
         (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
     }
 
-    nonisolated private static func keepIfSmaller(_ ok: Bool, dest: URL, original url: URL) -> Bool {
-        guard ok else { return false }
-        let before = fileSize(url)
-        let after = fileSize(dest)
-        if before > 0 && after >= before {
-            try? FileManager.default.removeItem(at: dest)
-            noteSkipped()
-            return false
-        }
-        return true
-    }
-
-    nonisolated private static func compressImage(_ url: URL) -> Bool {
-        let dest = uniqueURL(for: url, ext: url.pathExtension.lowercased(), suffix: "-compressed")
-        guard compressImage(url, to: dest) else { return false }
-        noteSaved(original: fileSize(url), result: fileSize(dest))
-        if CompressionSettings.result == .replace {
-            // Original gre v koš, stisnjena datoteka prevzame njegovo ime. Če karkoli spodleti, ostane stisnjena datoteka ob originalu.
-            do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-                try FileManager.default.moveItem(at: dest, to: url)
-            } catch {
-                return true
-            }
-        }
-        return true
-    }
-
-    nonisolated private static func compressImage(_ url: URL, to dest: URL) -> Bool {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
-        let ext = url.pathExtension.lowercased()
-        let quality = CompressionSettings.quality
-        let maxSide = CompressionSettings.maxSide
-        switch ext {
-        case "jpg", "jpeg":
-            return keepIfSmaller(encode(source, to: dest, type: "public.jpeg", quality: quality.jpg, keepMetadata: true, maxSide: maxSide), dest: dest, original: url)
-        case "heic", "heif":
-            return keepIfSmaller(encode(source, to: dest, type: "public.heic", quality: quality.heic, keepMetadata: true, maxSide: maxSide), dest: dest, original: url)
-        case "webp":
-            guard let image = downscaled(source, maxSide: maxSide) ?? loadImage(source),
-                  let data = encodeWebP(image, quality: quality.webp) else { return false }
-            return keepIfSmaller((try? data.write(to: dest)) != nil, dest: dest, original: url)
-        case "png":
-            guard let image = downscaled(source, maxSide: maxSide) ?? loadImage(source),
-                  let data = PNGCompressor.compress(image) else { return false }
-            let original = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-            guard original == 0 || data.count < original else { noteSkipped(); return false } // ni manjši: ne shranimo
-            return (try? data.write(to: dest)) != nil
-        default:
-            return false
-        }
-    }
-
     // FOR WEB: v enem koraku spremeni velikost (večjo pomanjša, manjšo poveča na najdaljšo stranico),
     // po želji pretvori v sRGB in odstrani metapodatke, nato shrani s kakovostjo iz nastavitev.
     // Rezultat je ob originalu z oznako "-web".
@@ -420,14 +364,39 @@ enum Converter {
         case "heic", "heif":
             ok = writeScaled(image, from: source, to: dest, type: "public.heic", quality: quality.heic, keepMetadata: keep)
         case "png":
-            ok = writeScaled(image, from: source, to: dest, type: "public.png", quality: 1.0, keepMetadata: keep)
+            // PNG ostane brez izgub, brez metapodatkov
+            if let data = PNGCompressor.compress(image) {
+                ok = (try? data.write(to: dest)) != nil
+            } else {
+                ok = writeScaled(image, from: source, to: dest, type: "public.png", quality: 1.0, keepMetadata: keep)
+            }
         case "webp":
             if let data = encodeWebP(image, quality: quality.webp) { ok = (try? data.write(to: dest)) != nil }
         default:
             return false
         }
-        if ok { noteSaved(original: fileSize(url), result: fileSize(dest)) }
-        return ok
+        guard ok else { return false }
+
+        // Če velikost ostane ista in datoteka ni manjša, je ne shranimo
+        if maxSide == 0 || longest == maxSide {
+            let before = fileSize(url)
+            if before > 0 && fileSize(dest) >= before {
+                try? FileManager.default.removeItem(at: dest)
+                noteSkipped()
+                return false
+            }
+        }
+        noteSaved(original: fileSize(url), result: fileSize(dest))
+        if WebSettings.result == .replace {
+            // Original gre v koš, nova datoteka prevzame njegovo ime. Če karkoli spodleti, ostane ob originalu.
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try FileManager.default.moveItem(at: dest, to: url)
+            } catch {
+                return true
+            }
+        }
+        return true
     }
 
     // Pretvori barvni prostor v sRGB (barve se pretvorijo, ne le preimenujejo)
@@ -1640,6 +1609,7 @@ enum WebSettings {
     static let qualityKey = "webQuality"
     static let srgbKey = "webSRGB"
     static let stripKey = "webStripMetadata"
+    static let resultKey = "webResult"
     // 0 = originalna velikost
     static let options = [0, 3840, 2560, 1920, 1600, 1280, 1024, 800]
 
@@ -1654,6 +1624,10 @@ enum WebSettings {
         CompressionQuality(rawValue: UserDefaults.standard.string(forKey: qualityKey) ?? "") ?? .balanced
     }
 
+    static var result: CompressionResult {
+        CompressionResult(rawValue: UserDefaults.standard.string(forKey: resultKey) ?? "") ?? .nextToOriginal
+    }
+
     static var srgb: Bool { UserDefaults.standard.object(forKey: srgbKey) as? Bool ?? true }
     static var stripMetadata: Bool { UserDefaults.standard.object(forKey: stripKey) as? Bool ?? true }
 }
@@ -1665,37 +1639,11 @@ enum WheelStyle: String, CaseIterable, Identifiable {
     var label: String { self == .glass ? "Glass" : "Solid" }
 }
 
-enum CompressionSettings {
-    static let qualityKey = "compressionQuality"
-    static let maxSideKey = "compressionMaxSide"
-    static let resultKey = "compressionResult"
-
-    // Dovoljene vrednosti za najdaljšo stranico (0 = originalna velikost)
-    static let maxSideOptions = [0, 3840, 2560, 1920, 1280]
-
-    static func maxSideLabel(_ v: Int) -> String { v == 0 ? "Original size" : "\(v) px" }
-
-    static var quality: CompressionQuality {
-        CompressionQuality(rawValue: UserDefaults.standard.string(forKey: qualityKey) ?? "") ?? .balanced
-    }
-
-    static var maxSide: Int {
-        let v = UserDefaults.standard.integer(forKey: maxSideKey)
-        return maxSideOptions.contains(v) ? v : 0
-    }
-
-    static var result: CompressionResult {
-        CompressionResult(rawValue: UserDefaults.standard.string(forKey: resultKey) ?? "") ?? .nextToOriginal
-    }
-}
-
 struct SettingsView: View {
     @StateObject private var model = SettingsModel()
     @ObservedObject private var updates = UpdateChecker.shared
     @AppStorage(ToolsKey.storageKey) private var toolsKey = ToolsKey.command.rawValue
-    @AppStorage(CompressionSettings.qualityKey) private var compressionQuality = CompressionQuality.balanced.rawValue
-    @AppStorage(CompressionSettings.maxSideKey) private var compressionMaxSide = 0
-    @AppStorage(CompressionSettings.resultKey) private var compressionResult = CompressionResult.nextToOriginal.rawValue
+    @AppStorage(WebSettings.resultKey) private var webResult = CompressionResult.nextToOriginal.rawValue
     @AppStorage(WheelStyle.storageKey) private var wheelStyle = WheelStyle.glass.rawValue
     @AppStorage(WebSettings.maxSideKey) private var webMaxSide = 1920
     @AppStorage(WebSettings.qualityKey) private var webQuality = CompressionQuality.balanced.rawValue
@@ -1784,50 +1732,10 @@ struct SettingsView: View {
                     .padding(.leading, 80)
                 Toggle("Remove metadata", isOn: $webStrip)
                     .padding(.leading, 80)
-                Text("Saved next to the original with \"-web\".")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 80)
-            }
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text("COMPRESSION")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Quality").frame(width: 72, alignment: .leading)
-                    Picker("Quality", selection: $compressionQuality) {
-                        ForEach(CompressionQuality.allCases) { q in
-                            Text(q.label).tag(q.rawValue)
-                        }
-                    }
-                    .labelsHidden()
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
-
-                HStack(alignment: .firstTextBaseline) {
-                    Text("Max size").frame(width: 72, alignment: .leading)
-                    Picker("Max size", selection: $compressionMaxSide) {
-                        ForEach(CompressionSettings.maxSideOptions, id: \.self) { v in
-                            Text(CompressionSettings.maxSideLabel(v)).tag(v)
-                        }
-                    }
-                    .labelsHidden()
-                    .fixedSize()
-                }
-                Text("Longest side in pixels. Smaller images are never enlarged.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 80)
 
                 HStack(alignment: .firstTextBaseline) {
                     Text("Result").frame(width: 72, alignment: .leading)
-                    Picker("Result", selection: $compressionResult) {
+                    Picker("Result", selection: $webResult) {
                         ForEach(CompressionResult.allCases) { r in
                             Text(r.label).tag(r.rawValue)
                         }
@@ -1835,9 +1743,9 @@ struct SettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                Text(compressionResult == CompressionResult.replace.rawValue
-                     ? "The original is moved to the Trash. If the result is not smaller, nothing changes."
-                     : "Adds \"-compressed\" to the name. If the result is not smaller, nothing is saved.")
+                Text(webResult == CompressionResult.replace.rawValue
+                     ? "The original is moved to the Trash. If the size stays the same and the result is not smaller, nothing changes."
+                     : "Adds \"-web\" to the name. If the size stays the same and the result is not smaller, nothing is saved.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
