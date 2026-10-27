@@ -90,6 +90,13 @@ func registerFonts() {
     if let url = Bundle.main.url(forResource: "Inter-SemiBold", withExtension: "ttf") {
         CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
     }
+    if let url = Bundle.main.url(forResource: "Inter-Regular", withExtension: "otf") {
+        CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    }
+}
+
+func interRegular(_ size: CGFloat) -> Font {
+    Font.custom("Inter-Regular", size: size)
 }
 
 func inter(_ size: CGFloat) -> Font {
@@ -131,7 +138,7 @@ enum Tool: String, CaseIterable {
     var formats: String {
         switch self {
         case .web:
-            return WebSettings.maxSide == 0 ? "SAME SIZE" : "TO \(WebSettings.maxSide) PX"
+            return WebSettings.maxSide == 0 ? "Original size" : "Size change: \(WebSettings.maxSide) px"
         case .strip: return "JPG · PNG\nHEIC · WEBP"
         }
     }
@@ -1360,13 +1367,13 @@ struct WheelView: View {
                         .foregroundStyle(labelColor)
                     Text(tool.formats)
                         .font(inter(10 * u))
-                        .tracking(0.8 * u)
+                        .tracking(tool == .web ? 0 : 0.8 * u)
                         .multilineTextAlignment(.center)
                         .lineSpacing(1 * u)
                         .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
                     if tool == .web {
-                        Text("(Change size in Settings)")
-                            .font(.system(size: 10 * u, weight: .regular))
+                        Text("(Change in Settings)")
+                            .font(interRegular(10 * u))
                             .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
                     }
                 }
