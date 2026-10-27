@@ -1225,7 +1225,7 @@ struct WheelView: View {
         if style == WheelStyle.glass.rawValue {
             ZStack {
                 VisualEffectDisk()
-                Circle().fill(p.disk.opacity(0.40))
+                Circle().fill(p.disk.opacity(0.25))
                 Circle().fill(LinearGradient(
                     colors: [Color.white.opacity(scheme == .dark ? 0.10 : 0.45), Color.white.opacity(0.0), Color.white.opacity(scheme == .dark ? 0.06 : 0.25)],
                     startPoint: .topLeading, endPoint: .bottomTrailing))
