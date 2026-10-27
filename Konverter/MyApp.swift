@@ -386,37 +386,87 @@ enum Converter {
         }
     }
 
-    // Pomanjša sliko na najdaljšo stranico iz nastavitev. Manjših slik ne povečuje. Rezultat je ob originalu z oznako "-resized".
+    // Spremeni velikost v obe smeri: večjo sliko pomanjša, manjšo poveča na najdaljšo stranico iz nastavitev.
+    // Rezultat je ob originalu z oznako "-resized".
     nonisolated private static func resizeImage(_ url: URL) -> Bool {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
         let maxSide = ResizeSettings.maxSide
         guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let w = props[kCGImagePropertyPixelWidth] as? Int,
               let h = props[kCGImagePropertyPixelHeight] as? Int,
-              max(w, h) > maxSide else { noteSkipped(); return false }
+              max(w, h) != maxSide else { noteSkipped(); return false }
+        let shrinking = max(w, h) > maxSide
         let ext = url.pathExtension.lowercased()
         let dest = uniqueURL(for: url, ext: ext, suffix: "-resized")
         var ok = false
-        switch ext {
-        case "jpg", "jpeg":
-            ok = encode(source, to: dest, type: "public.jpeg", quality: 0.92, keepMetadata: true, maxSide: maxSide)
-        case "heic", "heif":
-            ok = encode(source, to: dest, type: "public.heic", quality: 0.9, keepMetadata: true, maxSide: maxSide)
-        case "webp":
-            if let image = downscaled(source, maxSide: maxSide), let data = encodeWebP(image, quality: 90) {
-                ok = (try? data.write(to: dest)) != nil
+
+        // Pomanjšanje JPG in HEIC ohrani vse metapodatke in HDR gain map
+        if shrinking && ["jpg", "jpeg", "heic", "heif"].contains(ext) {
+            let heic = ext.hasPrefix("he")
+            ok = encode(source, to: dest, type: heic ? "public.heic" : "public.jpeg", quality: heic ? 0.9 : 0.92, keepMetadata: true, maxSide: maxSide)
+        } else {
+            guard let image = shrinking ? downscaled(source, maxSide: maxSide) : upscaled(source, maxSide: maxSide) else { return false }
+            switch ext {
+            case "jpg", "jpeg":
+                ok = writeScaled(image, from: source, to: dest, type: "public.jpeg", quality: 0.92)
+            case "heic", "heif":
+                ok = writeScaled(image, from: source, to: dest, type: "public.heic", quality: 0.9)
+            case "png":
+                ok = writeScaled(image, from: source, to: dest, type: "public.png", quality: 1.0)
+            case "webp":
+                if let data = encodeWebP(image, quality: 90) { ok = (try? data.write(to: dest)) != nil }
+            default:
+                return false
             }
-        case "png":
-            if let image = downscaled(source, maxSide: maxSide),
-               let destination = CGImageDestinationCreateWithURL(dest as CFURL, "public.png" as CFString, 1, nil) {
-                CGImageDestinationAddImage(destination, image, nil)
-                ok = CGImageDestinationFinalize(destination)
-            }
-        default:
-            return false
         }
         if ok { noteSaved(original: fileSize(url), result: fileSize(dest)) }
         return ok
+    }
+
+    // Poveča sliko (z upoštevano orientacijo) na najdaljšo stranico maxSide, visokokakovostna interpolacija
+    nonisolated private static func upscaled(_ source: CGImageSource, maxSide: Int) -> CGImage? {
+        guard let base = loadImage(source) else { return nil }
+        let longest = max(base.width, base.height)
+        guard longest > 0 else { return nil }
+        let scale = Double(maxSide) / Double(longest)
+        let w = max(1, Int((Double(base.width) * scale).rounded()))
+        let h = max(1, Int((Double(base.height) * scale).rounded()))
+        let info = CGImageAlphaInfo.premultipliedLast.rawValue
+        var ctx: CGContext? = nil
+        if let space = base.colorSpace {
+            ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: space, bitmapInfo: info)
+        }
+        if ctx == nil, let srgb = CGColorSpace(name: CGColorSpace.sRGB) {
+            ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0, space: srgb, bitmapInfo: info)
+        }
+        guard let context = ctx else { return nil }
+        context.interpolationQuality = .high
+        context.draw(base, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return context.makeImage()
+    }
+
+    // Zapiše že obrnjeno sliko z metapodatki izvirnika (brez dimenzij in orientacije, da se ne obrne dvakrat)
+    nonisolated private static func writeScaled(_ image: CGImage, from source: CGImageSource, to dest: URL, type: String, quality: Double) -> Bool {
+        guard let destination = CGImageDestinationCreateWithURL(dest as CFURL, type as CFString, 1, nil) else { return false }
+        var options: [CFString: Any] = [:]
+        if var props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+            props.removeValue(forKey: kCGImagePropertyPixelWidth)
+            props.removeValue(forKey: kCGImagePropertyPixelHeight)
+            props[kCGImagePropertyOrientation] = 1
+            if var exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
+                exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
+                props[kCGImagePropertyExifDictionary] = exif
+            }
+            if var tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                tiff.removeValue(forKey: kCGImagePropertyTIFFOrientation)
+                props[kCGImagePropertyTIFFDictionary] = tiff
+            }
+            for (k, v) in props { options[k] = v }
+        }
+        options[kCGImageDestinationLossyCompressionQuality] = quality
+        CGImageDestinationAddImage(destination, image, options as CFDictionary)
+        return CGImageDestinationFinalize(destination)
     }
 
     nonisolated private static func stripMetadata(_ url: URL) -> Bool {
@@ -1274,7 +1324,7 @@ struct WheelView: View {
                     model.message = Self.cheers.randomElement() ?? "DONE!"
                 } else if ok == 0 && skipped == urls.count {
                     if case .tool(.resize) = target {
-                        model.message = "ALREADY\n≤ \(ResizeSettings.maxSide) PX"
+                        model.message = "ALREADY\n\(ResizeSettings.maxSide) PX"
                     } else {
                         model.message = "ALREADY\nSMALL"
                     }
@@ -1681,7 +1731,7 @@ struct SettingsView: View {
                     .labelsHidden()
                     .fixedSize()
                 }
-                Text("Longest side for the RESIZE tool. Saved next to the original with \"-resized\". Smaller images are never enlarged.")
+                Text("Longest side for the RESIZE tool. Larger images are shrunk, smaller ones are enlarged. Saved next to the original with \"-resized\".")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
