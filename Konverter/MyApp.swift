@@ -99,7 +99,7 @@ func inter(_ size: CGFloat) -> Font {
 // MARK: - Formati
 
 enum ImageFormat: String, CaseIterable, Identifiable {
-    case png = "PNG", webp = "WEBP", jpg = "JPG", avif = "AVIF", heic = "HEIC", pdf = "PDF"
+    case png = "PNG", webp = "WEBP", jpg = "JPG", avif = "AVIF", heic = "HEIC", pdf = "PDF", tiff = "TIFF", bmp = "BMP"
     var id: String { rawValue }
 
     var ext: String { self == .jpg ? "jpg" : rawValue.lowercased() }
@@ -111,6 +111,8 @@ enum ImageFormat: String, CaseIterable, Identifiable {
         case .heic: return "public.heic"
         case .avif: return "public.avif"
         case .pdf: return "com.adobe.pdf"
+        case .tiff: return "public.tiff"
+        case .bmp: return "com.microsoft.bmp"
         case .webp: return nil
         }
     }
@@ -124,11 +126,13 @@ enum VideoFormat: String, CaseIterable, Identifiable {
 
 enum Tool: String, CaseIterable {
     case compress = "COMPRESS"
+    case resize = "RESIZE"
     case strip = "STRIP METADATA"
 
     var formats: String {
         switch self {
         case .compress: return "PNG · JPG · WEBP · HEIC"
+        case .resize: return "TO \(ResizeSettings.maxSide) PX"
         case .strip: return "JPG · PNG · HEIC · WEBP"
         }
     }
@@ -187,6 +191,8 @@ enum Converter {
         case "avif": return .image(.avif)
         case "heic", "heif": return .image(.heic)
         case "pdf": return .image(.pdf)
+        case "tiff", "tif": return .image(.tiff)
+        case "bmp": return .image(.bmp)
         case "mp4": return .video(.mp4)
         case "gif": return .video(.gif)
         default: return nil
@@ -217,6 +223,7 @@ enum Converter {
             guard kind(of: url) == .image else { return false }
             switch t {
             case .compress: return compressImage(url)
+            case .resize: return resizeImage(url)
             case .strip: return stripMetadata(url)
             }
         }
@@ -294,7 +301,30 @@ enum Converter {
         skippedLock.unlock()
     }
 
-    nonisolated private static func fileSize(_ url: URL) -> Int {
+    // Skupni prihranek (v bajtih) zadnjega zagona orodja
+    nonisolated private static let savedLock = NSLock()
+    nonisolated(unsafe) private static var savedValue = 0
+
+    nonisolated static var savedBytes: Int {
+        savedLock.lock()
+        defer { savedLock.unlock() }
+        return savedValue
+    }
+
+    nonisolated static func resetSaved() {
+        savedLock.lock()
+        savedValue = 0
+        savedLock.unlock()
+    }
+
+    nonisolated private static func noteSaved(original: Int, result: Int) {
+        guard original > result else { return }
+        savedLock.lock()
+        savedValue += original - result
+        savedLock.unlock()
+    }
+
+    nonisolated static func fileSize(_ url: URL) -> Int {
         (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
     }
 
@@ -313,6 +343,7 @@ enum Converter {
     nonisolated private static func compressImage(_ url: URL) -> Bool {
         let dest = uniqueURL(for: url, ext: url.pathExtension.lowercased(), suffix: "-compressed")
         guard compressImage(url, to: dest) else { return false }
+        noteSaved(original: fileSize(url), result: fileSize(dest))
         if CompressionSettings.result == .replace {
             // Original gre v koš, stisnjena datoteka prevzame njegovo ime. Če karkoli spodleti, ostane stisnjena datoteka ob originalu.
             do {
@@ -348,6 +379,39 @@ enum Converter {
         default:
             return false
         }
+    }
+
+    // Pomanjša sliko na najdaljšo stranico iz nastavitev. Manjših slik ne povečuje. Rezultat je ob originalu z oznako "-resized".
+    nonisolated private static func resizeImage(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
+        let maxSide = ResizeSettings.maxSide
+        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              max(w, h) > maxSide else { noteSkipped(); return false }
+        let ext = url.pathExtension.lowercased()
+        let dest = uniqueURL(for: url, ext: ext, suffix: "-resized")
+        var ok = false
+        switch ext {
+        case "jpg", "jpeg":
+            ok = encode(source, to: dest, type: "public.jpeg", quality: 0.92, keepMetadata: true, maxSide: maxSide)
+        case "heic", "heif":
+            ok = encode(source, to: dest, type: "public.heic", quality: 0.9, keepMetadata: true, maxSide: maxSide)
+        case "webp":
+            if let image = downscaled(source, maxSide: maxSide), let data = encodeWebP(image, quality: 90) {
+                ok = (try? data.write(to: dest)) != nil
+            }
+        case "png":
+            if let image = downscaled(source, maxSide: maxSide),
+               let destination = CGImageDestinationCreateWithURL(dest as CFURL, "public.png" as CFString, 1, nil) {
+                CGImageDestinationAddImage(destination, image, nil)
+                ok = CGImageDestinationFinalize(destination)
+            }
+        default:
+            return false
+        }
+        if ok { noteSaved(original: fileSize(url), result: fileSize(dest)) }
+        return ok
     }
 
     nonisolated private static func stripMetadata(_ url: URL) -> Bool {
@@ -907,6 +971,7 @@ final class WheelModel: ObservableObject {
     @Published var total = 0
     @Published var disabled: Set<Target> = []
     @Published var mode: WheelMode = .convert
+    @Published var sizeText = ""
 }
 
 struct Wedge: Shape {
@@ -1059,10 +1124,22 @@ struct WheelDropDelegate: DropDelegate {
     }
 }
 
+struct VisualEffectDisk: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let v = NSVisualEffectView()
+        v.blendingMode = .behindWindow
+        v.material = .popover
+        v.state = .active
+        return v
+    }
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
 struct WheelView: View {
     @ObservedObject var model: WheelModel
     let size: CGFloat
     @Environment(\.colorScheme) private var scheme
+    @AppStorage(WheelStyle.storageKey) private var style = WheelStyle.glass.rawValue
     @State private var targeted: Target? = nil
     @State private var overCenter = false
     @State private var overSame = false
@@ -1077,9 +1154,7 @@ struct WheelView: View {
         let centerText = hint ?? (model.message.isEmpty ? (targeted?.shortLabel ?? "") : model.message)
 
         ZStack {
-            Circle()
-                .fill(p.disk)
-                .shadow(color: Color.black.opacity(scheme == .dark ? 0.5 : 0.22), radius: 16 * u, x: 0, y: 10 * u)
+            disk(p: p, u: u)
 
             ForEach(Array(targets.enumerated()), id: \.offset) { index, target in
                 segment(index: index, count: targets.count, target: target, p: p, u: u)
@@ -1099,14 +1174,26 @@ struct WheelView: View {
             Circle()
                 .fill(p.wedge)
                 .frame(width: 112 * u, height: 112 * u)
-            Text(centerText)
-                .multilineTextAlignment(.center)
-                .lineSpacing(1 * u)
-                .font(inter(hint == nil ? 14 * u : 11 * u))
-                .tracking(hint == nil ? 0 : 0.88 * u)
-                .foregroundStyle(hint == nil ? p.text : p.textDim)
+            VStack(spacing: 3 * u) {
+                Text(centerText)
+                    .multilineTextAlignment(.center)
+                    .lineSpacing(1 * u)
+                    .font(inter(hint == nil ? 14 * u : 11 * u))
+                    .tracking(hint == nil ? 0 : 0.88 * u)
+                    .foregroundStyle(hint == nil ? p.text : p.textDim)
+                if !model.sizeText.isEmpty {
+                    Text(model.sizeText)
+                        .font(inter(10 * u))
+                        .tracking(0.6 * u)
+                        .foregroundStyle(p.textDim)
+                }
+            }
+            .frame(width: 100 * u)
         }
         .frame(width: size, height: size)
+        .onChange(of: targeted) { _, new in
+            if new != nil { Feedback.wedgeChanged() }
+        }
         .onDrop(of: [.fileURL], delegate: WheelDropDelegate(
             size: size,
             inner: 62 * u,
@@ -1128,8 +1215,36 @@ struct WheelView: View {
         "TOO EASY!", "CLEAN!"
     ]
 
+    // Nosilec kolesa: Solid je polna barva, Glass je zamegljeno ozadje z barvno tinto in svetlim robom
+    @ViewBuilder
+    private func disk(p: Palette, u: CGFloat) -> some View {
+        let shadow = Color.black.opacity(scheme == .dark ? 0.5 : 0.22)
+        if style == WheelStyle.glass.rawValue {
+            ZStack {
+                VisualEffectDisk()
+                Circle().fill(p.disk.opacity(0.66))
+            }
+            .frame(width: size, height: size)
+            .clipShape(Circle())
+            .overlay(
+                Circle().strokeBorder(
+                    LinearGradient(
+                        colors: [Color.white.opacity(scheme == .dark ? 0.35 : 0.9), Color.white.opacity(0.15), Color.white.opacity(scheme == .dark ? 0.2 : 0.6)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing),
+                    lineWidth: 1.2 * u)
+            )
+            .shadow(color: shadow, radius: 16 * u, x: 0, y: 10 * u)
+        } else {
+            Circle()
+                .fill(p.disk)
+                .shadow(color: shadow, radius: 16 * u, x: 0, y: 10 * u)
+        }
+    }
+
     private func run(_ urls: [URL], _ target: Target) {
         model.chosen = target
+        model.sizeText = ""
+        Converter.resetSaved()
         model.busy = true
         model.total = urls.count
         model.progress = 0
@@ -1155,6 +1270,10 @@ struct WheelView: View {
                     model.message = "ALREADY\nSMALL"
                 } else {
                     model.message = "⚠︎ \(ok)/\(urls.count)"
+                }
+                let saved = Converter.savedBytes
+                if saved > 0, case .tool(let t) = target, t != .strip {
+                    model.sizeText = "−" + ByteCountFormatter.string(fromByteCount: Int64(saved), countStyle: .file).uppercased()
                 }
                 model.busy = false
             }
@@ -1428,6 +1547,38 @@ enum CompressionResult: String, CaseIterable, Identifiable {
     }
 }
 
+enum ResizeSettings {
+    static let maxSideKey = "resizeMaxSide"
+    static let options = [3840, 2560, 1920, 1280, 1024]
+
+    static var maxSide: Int {
+        let v = UserDefaults.standard.integer(forKey: maxSideKey)
+        return options.contains(v) ? v : 1920
+    }
+}
+
+enum WheelStyle: String, CaseIterable, Identifiable {
+    case glass, solid
+    static let storageKey = "wheelStyle"
+    var id: String { rawValue }
+    var label: String { self == .glass ? "Glass" : "Solid" }
+}
+
+enum Feedback {
+    static let hapticKey = "feedbackHaptic"
+    static let soundKey = "feedbackSound"
+
+    static func wedgeChanged() {
+        let d = UserDefaults.standard
+        if d.object(forKey: hapticKey) as? Bool ?? true {
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        }
+        if d.object(forKey: soundKey) as? Bool ?? false {
+            NSSound(named: "Tink")?.play()
+        }
+    }
+}
+
 enum CompressionSettings {
     static let qualityKey = "compressionQuality"
     static let maxSideKey = "compressionMaxSide"
@@ -1459,6 +1610,10 @@ struct SettingsView: View {
     @AppStorage(CompressionSettings.qualityKey) private var compressionQuality = CompressionQuality.balanced.rawValue
     @AppStorage(CompressionSettings.maxSideKey) private var compressionMaxSide = 0
     @AppStorage(CompressionSettings.resultKey) private var compressionResult = CompressionResult.nextToOriginal.rawValue
+    @AppStorage(WheelStyle.storageKey) private var wheelStyle = WheelStyle.glass.rawValue
+    @AppStorage(ResizeSettings.maxSideKey) private var resizeMaxSide = 1920
+    @AppStorage(Feedback.hapticKey) private var feedbackHaptic = true
+    @AppStorage(Feedback.soundKey) private var feedbackSound = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1480,6 +1635,56 @@ struct SettingsView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("APPEARANCE")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Style").frame(width: 72, alignment: .leading)
+                    Picker("Style", selection: $wheelStyle) {
+                        ForEach(WheelStyle.allCases) { st in
+                            Text(st.label).tag(st.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                Toggle("Haptic feedback", isOn: $feedbackHaptic)
+                Toggle("Sound", isOn: $feedbackSound)
+                Text("Plays when the pointer moves to another wedge.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("RESIZE")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Max size").frame(width: 72, alignment: .leading)
+                    Picker("Resize to", selection: $resizeMaxSide) {
+                        ForEach(ResizeSettings.options, id: \.self) { v in
+                            Text("\(v) px").tag(v)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("Longest side for the RESIZE tool. Saved next to the original with \"-resized\". Smaller images are never enlarged.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 80)
             }
 
             Divider()
@@ -1714,6 +1919,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         model.chosen = nil
         model.progress = 0
         model.total = 0
+        let bytes = urls.reduce(0) { $0 + Converter.fileSize($1) }
+        let count = urls.count
+        model.sizeText = bytes > 0
+            ? (count > 1 ? "\(count) FILES · " : "") + ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file).uppercased()
+            : ""
         if panel == nil { panel = makePanel() }
 
         let m = NSEvent.mouseLocation
