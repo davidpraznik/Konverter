@@ -1177,7 +1177,7 @@ struct WheelView: View {
             }
 
             Circle()
-                .fill(p.wedge)
+                .fill(p.wedge.opacity(style == WheelStyle.glass.rawValue ? 0.88 : 1))
                 .frame(width: 112 * u, height: 112 * u)
             VStack(spacing: 3 * u) {
                 Text(centerText)
@@ -1307,9 +1307,17 @@ struct WheelView: View {
         let px = size / 2 + r * cos(center)
         let py = size / 2 + r * sin(center)
 
+        // Pri Glass so neaktivni izseki rahlo prosojni (88 %), aktivni je poln
+        let glass = style == WheelStyle.glass.rawValue
+        let wedgeOpacity: Double = (glass && !active) ? 0.88 : 1
+
         return ZStack {
-            shape.fill(fill)
-            shape.stroke(fill, style: StrokeStyle(lineWidth: 12 * u, lineJoin: .round))
+            ZStack {
+                shape.fill(fill)
+                shape.stroke(fill, style: StrokeStyle(lineWidth: 12 * u, lineJoin: .round))
+            }
+            .compositingGroup()
+            .opacity(wedgeOpacity)
             if case .tool(let tool) = target {
                 VStack(spacing: 4 * u) {
                     Text(tool.title)
