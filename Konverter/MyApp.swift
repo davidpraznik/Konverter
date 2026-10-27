@@ -126,13 +126,13 @@ enum VideoFormat: String, CaseIterable, Identifiable {
 
 enum Tool: String, CaseIterable {
     case compress = "COMPRESS"
-    case resize = "RESIZE"
+    case web = "FOR WEB"
     case strip = "STRIP METADATA"
 
     var formats: String {
         switch self {
         case .compress: return "PNG · JPG · WEBP · HEIC"
-        case .resize: return "TO \(ResizeSettings.maxSide) PX"
+        case .web: return WebSettings.srgb ? "\(WebSettings.maxSide) PX · SRGB" : "\(WebSettings.maxSide) PX"
         case .strip: return "JPG · PNG\nHEIC · WEBP"
         }
     }
@@ -228,7 +228,7 @@ enum Converter {
             guard kind(of: url) == .image else { return false }
             switch t {
             case .compress: return compressImage(url)
-            case .resize: return resizeImage(url)
+            case .web: return webImage(url)
             case .strip: return stripMetadata(url)
             }
         }
@@ -386,41 +386,57 @@ enum Converter {
         }
     }
 
-    // Spremeni velikost v obe smeri: večjo sliko pomanjša, manjšo poveča na najdaljšo stranico iz nastavitev.
-    // Rezultat je ob originalu z oznako "-resized".
-    nonisolated private static func resizeImage(_ url: URL) -> Bool {
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
-        let maxSide = ResizeSettings.maxSide
-        guard let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+    // FOR WEB: v enem koraku spremeni velikost (večjo pomanjša, manjšo poveča na najdaljšo stranico),
+    // po želji pretvori v sRGB in odstrani metapodatke, nato shrani s kakovostjo iz nastavitev.
+    // Rezultat je ob originalu z oznako "-web".
+    nonisolated private static func webImage(_ url: URL) -> Bool {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let w = props[kCGImagePropertyPixelWidth] as? Int,
-              let h = props[kCGImagePropertyPixelHeight] as? Int,
-              max(w, h) != maxSide else { noteSkipped(); return false }
-        let shrinking = max(w, h) > maxSide
-        let ext = url.pathExtension.lowercased()
-        let dest = uniqueURL(for: url, ext: ext, suffix: "-resized")
-        var ok = false
-
-        // Pomanjšanje JPG in HEIC ohrani vse metapodatke in HDR gain map
-        if shrinking && ["jpg", "jpeg", "heic", "heif"].contains(ext) {
-            let heic = ext.hasPrefix("he")
-            ok = encode(source, to: dest, type: heic ? "public.heic" : "public.jpeg", quality: heic ? 0.9 : 0.92, keepMetadata: true, maxSide: maxSide)
+              let h = props[kCGImagePropertyPixelHeight] as? Int else { return false }
+        let maxSide = WebSettings.maxSide
+        let longest = max(w, h)
+        let base: CGImage?
+        if longest > maxSide {
+            base = downscaled(source, maxSide: maxSide)
+        } else if longest < maxSide {
+            base = upscaled(source, maxSide: maxSide)
         } else {
-            guard let image = shrinking ? downscaled(source, maxSide: maxSide) : upscaled(source, maxSide: maxSide) else { return false }
-            switch ext {
-            case "jpg", "jpeg":
-                ok = writeScaled(image, from: source, to: dest, type: "public.jpeg", quality: 0.92)
-            case "heic", "heif":
-                ok = writeScaled(image, from: source, to: dest, type: "public.heic", quality: 0.9)
-            case "png":
-                ok = writeScaled(image, from: source, to: dest, type: "public.png", quality: 1.0)
-            case "webp":
-                if let data = encodeWebP(image, quality: 90) { ok = (try? data.write(to: dest)) != nil }
-            default:
-                return false
-            }
+            base = loadImage(source)
+        }
+        guard var image = base else { return false }
+        if WebSettings.srgb, let converted = convertedToSRGB(image) { image = converted }
+
+        let ext = url.pathExtension.lowercased()
+        let dest = uniqueURL(for: url, ext: ext, suffix: "-web")
+        let quality = WebSettings.quality
+        let keep = !WebSettings.stripMetadata
+        var ok = false
+        switch ext {
+        case "jpg", "jpeg":
+            ok = writeScaled(image, from: source, to: dest, type: "public.jpeg", quality: quality.jpg, keepMetadata: keep)
+        case "heic", "heif":
+            ok = writeScaled(image, from: source, to: dest, type: "public.heic", quality: quality.heic, keepMetadata: keep)
+        case "png":
+            ok = writeScaled(image, from: source, to: dest, type: "public.png", quality: 1.0, keepMetadata: keep)
+        case "webp":
+            if let data = encodeWebP(image, quality: quality.webp) { ok = (try? data.write(to: dest)) != nil }
+        default:
+            return false
         }
         if ok { noteSaved(original: fileSize(url), result: fileSize(dest)) }
         return ok
+    }
+
+    // Pretvori barvni prostor v sRGB (barve se pretvorijo, ne le preimenujejo)
+    nonisolated private static func convertedToSRGB(_ image: CGImage) -> CGImage? {
+        guard let srgb = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        if let current = image.colorSpace, current.name == srgb.name { return image }
+        guard let ctx = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: srgb, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        return ctx.makeImage()
     }
 
     // Poveča sliko (z upoštevano orientacijo) na najdaljšo stranico maxSide, visokokakovostna interpolacija
@@ -446,12 +462,13 @@ enum Converter {
     }
 
     // Zapiše že obrnjeno sliko z metapodatki izvirnika (brez dimenzij in orientacije, da se ne obrne dvakrat)
-    nonisolated private static func writeScaled(_ image: CGImage, from source: CGImageSource, to dest: URL, type: String, quality: Double) -> Bool {
+    nonisolated private static func writeScaled(_ image: CGImage, from source: CGImageSource, to dest: URL, type: String, quality: Double, keepMetadata: Bool = true) -> Bool {
         guard let destination = CGImageDestinationCreateWithURL(dest as CFURL, type as CFString, 1, nil) else { return false }
         var options: [CFString: Any] = [:]
-        if var props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+        if keepMetadata, var props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
             props.removeValue(forKey: kCGImagePropertyPixelWidth)
             props.removeValue(forKey: kCGImagePropertyPixelHeight)
+            props.removeValue(forKey: kCGImagePropertyProfileName)
             props[kCGImagePropertyOrientation] = 1
             if var exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
                 exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
@@ -1323,11 +1340,7 @@ struct WheelView: View {
                 if ok == urls.count {
                     model.message = Self.cheers.randomElement() ?? "DONE!"
                 } else if ok == 0 && skipped == urls.count {
-                    if case .tool(.resize) = target {
-                        model.message = "ALREADY\n\(ResizeSettings.maxSide) PX"
-                    } else {
-                        model.message = "ALREADY\nSMALL"
-                    }
+                    model.message = "ALREADY\nSMALL"
                 } else {
                     model.message = "⚠︎ \(ok)/\(urls.count)"
                 }
@@ -1620,14 +1633,24 @@ enum CompressionResult: String, CaseIterable, Identifiable {
     }
 }
 
-enum ResizeSettings {
-    static let maxSideKey = "resizeMaxSide"
-    static let options = [3840, 2560, 1920, 1280, 1024]
+enum WebSettings {
+    static let maxSideKey = "webMaxSide"
+    static let qualityKey = "webQuality"
+    static let srgbKey = "webSRGB"
+    static let stripKey = "webStripMetadata"
+    static let options = [3840, 2560, 1920, 1600, 1280, 1024, 800]
 
     static var maxSide: Int {
         let v = UserDefaults.standard.integer(forKey: maxSideKey)
         return options.contains(v) ? v : 1920
     }
+
+    static var quality: CompressionQuality {
+        CompressionQuality(rawValue: UserDefaults.standard.string(forKey: qualityKey) ?? "") ?? .balanced
+    }
+
+    static var srgb: Bool { UserDefaults.standard.object(forKey: srgbKey) as? Bool ?? true }
+    static var stripMetadata: Bool { UserDefaults.standard.object(forKey: stripKey) as? Bool ?? true }
 }
 
 enum WheelStyle: String, CaseIterable, Identifiable {
@@ -1669,7 +1692,10 @@ struct SettingsView: View {
     @AppStorage(CompressionSettings.maxSideKey) private var compressionMaxSide = 0
     @AppStorage(CompressionSettings.resultKey) private var compressionResult = CompressionResult.nextToOriginal.rawValue
     @AppStorage(WheelStyle.storageKey) private var wheelStyle = WheelStyle.glass.rawValue
-    @AppStorage(ResizeSettings.maxSideKey) private var resizeMaxSide = 1920
+    @AppStorage(WebSettings.maxSideKey) private var webMaxSide = 1920
+    @AppStorage(WebSettings.qualityKey) private var webQuality = CompressionQuality.balanced.rawValue
+    @AppStorage(WebSettings.srgbKey) private var webSRGB = true
+    @AppStorage(WebSettings.stripKey) private var webStrip = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1717,24 +1743,45 @@ struct SettingsView: View {
             Divider()
 
             VStack(alignment: .leading, spacing: 10) {
-                Text("RESIZE")
+                Text("FOR WEB")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
 
                 HStack(alignment: .firstTextBaseline) {
                     Text("Max size").frame(width: 72, alignment: .leading)
-                    Picker("Resize to", selection: $resizeMaxSide) {
-                        ForEach(ResizeSettings.options, id: \.self) { v in
+                    Picker("Max size", selection: $webMaxSide) {
+                        ForEach(WebSettings.options, id: \.self) { v in
                             Text("\(v) px").tag(v)
                         }
                     }
                     .labelsHidden()
                     .fixedSize()
                 }
-                Text("Longest side for the RESIZE tool. Larger images are shrunk, smaller ones are enlarged. Saved next to the original with \"-resized\".")
+                Text("Longest side. Larger images are shrunk, smaller ones enlarged.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 80)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Quality").frame(width: 72, alignment: .leading)
+                    Picker("Quality", selection: $webQuality) {
+                        ForEach(CompressionQuality.allCases) { q in
+                            Text(q.label).tag(q.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                Toggle("Convert to sRGB", isOn: $webSRGB)
+                    .padding(.leading, 80)
+                Toggle("Remove metadata", isOn: $webStrip)
+                    .padding(.leading, 80)
+                Text("Saved next to the original with \"-web\".")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                     .padding(.leading, 80)
             }
 
