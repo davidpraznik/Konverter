@@ -1364,6 +1364,11 @@ struct WheelView: View {
                         .multilineTextAlignment(.center)
                         .lineSpacing(1 * u)
                         .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
+                    if tool == .web {
+                        Text("(Change size in Settings)")
+                            .font(.system(size: 10 * u, weight: .regular))
+                            .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
+                    }
                 }
                 .position(x: px, y: py)
             } else {
