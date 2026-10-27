@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  Hold <b>⇧ Shift</b> while dragging a file to convert it, <b>⌘ Command</b> to compress or strip metadata.<br>
+  Hold <b>⇧ Shift</b> while dragging a file to convert it, <b>⌘ Command</b> to prepare images for the web or strip metadata.<br>
   Lives in your menu bar. The result is saved next to the original.
 </p>
 
@@ -17,7 +17,7 @@
 
 | Input | Output |
 | --- | --- |
-| Images | PNG, WEBP, JPG, AVIF, HEIC, PDF |
+| Images | PNG, WEBP, JPG, AVIF, HEIC, PDF, TIFF, BMP |
 | Video | MP4, GIF, M4A (audio only) |
 
 Several files can be dropped at once. If a file with the same name exists, a number is added (`photo (1).webp`).
@@ -30,7 +30,7 @@ Several files can be dropped at once. If a file with the same name exists, a num
    Switching apps with ⌘ Tab while holding a file opens the tools wheel by accident? Change the tools key to **⇧⌘** in Settings ([details](#tools-key)).
 4. Drop the files on a segment. The result is saved next to the original.
 
-Dropping on the centre or between segments does nothing. The segment with the file's own format is dimmed.
+Dropping on the centre or between segments does nothing. The segment with the file's own format is dimmed. While you drag, the centre of the wheel shows the number of files and their total size, and after **For web** it shows how much space was saved.
 
 ## Image tools
 
@@ -38,10 +38,17 @@ The **⌘ Command** wheel has two tools for images:
 
 | Tool | Formats | What it does |
 | --- | --- | --- |
-| Compress | PNG, JPG, WEBP, HEIC | Makes the file smaller and saves `name-compressed.ext`. PNG uses its own colour quantization (up to 256 colours, transparency kept). Files that cannot get smaller are skipped. |
-| Strip metadata | JPG, PNG, HEIC, WEBP | Removes EXIF, location and other metadata. Saves `name-clean.ext`. |
+| For web | PNG, JPG, WEBP, HEIC | Prepares the image for publishing in one step: sets the longest side (larger images are shrunk, smaller ones enlarged, or keep the original size), compresses with the chosen quality, converts colours to sRGB and removes metadata. Saves `name-web.ext`, or replaces the original (it goes to the Trash). PNG stays lossless. If the size stays the same and the file does not get smaller, nothing is saved. |
+| Strip metadata | JPG, PNG, HEIC, WEBP | Removes EXIF, location and other metadata, nothing else changes. Saves `name-clean.ext`. |
 
-Settings (menu bar icon, Settings…): launch at login, check for updates (GitHub releases), with an optional automatic check once a day, and the tools key (see below).
+## Settings
+
+Menu bar icon, Settings…
+
+- Launch at login, check for updates (GitHub releases, optional automatic check once a day).
+- Tools key (see below).
+- **Style**: *Glass* (translucent wheel carrier) or *Solid* (the classic look).
+- **For web**: max size (original, 3840, 2560, 1920, 1600, 1280, 1024 or 800 px), quality (Smaller, Balanced, Better), convert to sRGB, remove metadata, and whether the result is saved next to the original or replaces it.
 
 ## Tools key
 
