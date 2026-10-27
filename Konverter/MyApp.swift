@@ -132,7 +132,9 @@ enum Tool: String, CaseIterable {
     var formats: String {
         switch self {
         case .compress: return "PNG · JPG · WEBP · HEIC"
-        case .web: return WebSettings.srgb ? "\(WebSettings.maxSide) PX · SRGB" : "\(WebSettings.maxSide) PX"
+        case .web:
+            let size = WebSettings.maxSide == 0 ? "ORIGINAL" : "\(WebSettings.maxSide) PX"
+            return WebSettings.srgb ? "\(size) · SRGB" : size
         case .strip: return "JPG · PNG\nHEIC · WEBP"
         }
     }
@@ -397,12 +399,12 @@ enum Converter {
         let maxSide = WebSettings.maxSide
         let longest = max(w, h)
         let base: CGImage?
-        if longest > maxSide {
-            base = downscaled(source, maxSide: maxSide)
-        } else if longest < maxSide {
-            base = upscaled(source, maxSide: maxSide)
-        } else {
+        if maxSide == 0 || longest == maxSide {
             base = loadImage(source)
+        } else if longest > maxSide {
+            base = downscaled(source, maxSide: maxSide)
+        } else {
+            base = upscaled(source, maxSide: maxSide)
         }
         guard var image = base else { return false }
         if WebSettings.srgb, let converted = convertedToSRGB(image) { image = converted }
@@ -1638,10 +1640,13 @@ enum WebSettings {
     static let qualityKey = "webQuality"
     static let srgbKey = "webSRGB"
     static let stripKey = "webStripMetadata"
-    static let options = [3840, 2560, 1920, 1600, 1280, 1024, 800]
+    // 0 = originalna velikost
+    static let options = [0, 3840, 2560, 1920, 1600, 1280, 1024, 800]
+
+    static func label(_ v: Int) -> String { v == 0 ? "Original size" : "\(v) px" }
 
     static var maxSide: Int {
-        let v = UserDefaults.standard.integer(forKey: maxSideKey)
+        let v = UserDefaults.standard.object(forKey: maxSideKey) as? Int ?? 1920
         return options.contains(v) ? v : 1920
     }
 
@@ -1751,13 +1756,13 @@ struct SettingsView: View {
                     Text("Max size").frame(width: 72, alignment: .leading)
                     Picker("Max size", selection: $webMaxSide) {
                         ForEach(WebSettings.options, id: \.self) { v in
-                            Text("\(v) px").tag(v)
+                            Text(WebSettings.label(v)).tag(v)
                         }
                     }
                     .labelsHidden()
                     .fixedSize()
                 }
-                Text("Longest side. Larger images are shrunk, smaller ones enlarged.")
+                Text("Longest side. Larger images are shrunk, smaller ones enlarged. Original size keeps the dimensions.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
