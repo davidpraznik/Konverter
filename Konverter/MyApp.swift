@@ -133,8 +133,13 @@ enum Tool: String, CaseIterable {
         switch self {
         case .compress: return "PNG · JPG · WEBP · HEIC"
         case .resize: return "TO \(ResizeSettings.maxSide) PX"
-        case .strip: return "JPG · PNG · HEIC · WEBP"
+        case .strip: return "JPG · PNG\nHEIC · WEBP"
         }
+    }
+
+    // Naslov na kolesu, daljši je v dveh vrsticah, da ne uide iz izseka
+    var title: String {
+        self == .strip ? "STRIP\nMETADATA" : rawValue
     }
 }
 
@@ -1191,9 +1196,7 @@ struct WheelView: View {
             .frame(width: 100 * u)
         }
         .frame(width: size, height: size)
-        .onChange(of: targeted) { _, new in
-            if new != nil { Feedback.wedgeChanged() }
-        }
+
         .onDrop(of: [.fileURL], delegate: WheelDropDelegate(
             size: size,
             inner: 62 * u,
@@ -1222,7 +1225,10 @@ struct WheelView: View {
         if style == WheelStyle.glass.rawValue {
             ZStack {
                 VisualEffectDisk()
-                Circle().fill(p.disk.opacity(0.66))
+                Circle().fill(p.disk.opacity(0.40))
+                Circle().fill(LinearGradient(
+                    colors: [Color.white.opacity(scheme == .dark ? 0.10 : 0.45), Color.white.opacity(0.0), Color.white.opacity(scheme == .dark ? 0.06 : 0.25)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing))
             }
             .frame(width: size, height: size)
             .clipShape(Circle())
@@ -1267,7 +1273,11 @@ struct WheelView: View {
                 if ok == urls.count {
                     model.message = Self.cheers.randomElement() ?? "DONE!"
                 } else if ok == 0 && skipped == urls.count {
-                    model.message = "ALREADY\nSMALL"
+                    if case .tool(.resize) = target {
+                        model.message = "ALREADY\n≤ \(ResizeSettings.maxSide) PX"
+                    } else {
+                        model.message = "ALREADY\nSMALL"
+                    }
                 } else {
                     model.message = "⚠︎ \(ok)/\(urls.count)"
                 }
@@ -1301,15 +1311,20 @@ struct WheelView: View {
             shape.fill(fill)
             shape.stroke(fill, style: StrokeStyle(lineWidth: 12 * u, lineJoin: .round))
             if case .tool(let tool) = target {
-                Text(target.label)
-                    .font(inter(15 * u))
-                    .foregroundStyle(labelColor)
-                    .position(x: px, y: py - 9 * u)
-                Text(tool.formats)
-                    .font(inter(10 * u))
-                    .tracking(0.8 * u)
-                    .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
-                    .position(x: px, y: py + 9 * u)
+                VStack(spacing: 4 * u) {
+                    Text(tool.title)
+                        .font(inter(15 * u))
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(0)
+                        .foregroundStyle(labelColor)
+                    Text(tool.formats)
+                        .font(inter(10 * u))
+                        .tracking(0.8 * u)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(1 * u)
+                        .foregroundStyle(active ? Color.white.opacity(0.8) : p.textDim)
+                }
+                .position(x: px, y: py)
             } else {
                 Text(target.label)
                     .font(inter(15 * u))
@@ -1564,21 +1579,6 @@ enum WheelStyle: String, CaseIterable, Identifiable {
     var label: String { self == .glass ? "Glass" : "Solid" }
 }
 
-enum Feedback {
-    static let hapticKey = "feedbackHaptic"
-    static let soundKey = "feedbackSound"
-
-    static func wedgeChanged() {
-        let d = UserDefaults.standard
-        if d.object(forKey: hapticKey) as? Bool ?? true {
-            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
-        }
-        if d.object(forKey: soundKey) as? Bool ?? false {
-            NSSound(named: "Tink")?.play()
-        }
-    }
-}
-
 enum CompressionSettings {
     static let qualityKey = "compressionQuality"
     static let maxSideKey = "compressionMaxSide"
@@ -1612,8 +1612,6 @@ struct SettingsView: View {
     @AppStorage(CompressionSettings.resultKey) private var compressionResult = CompressionResult.nextToOriginal.rawValue
     @AppStorage(WheelStyle.storageKey) private var wheelStyle = WheelStyle.glass.rawValue
     @AppStorage(ResizeSettings.maxSideKey) private var resizeMaxSide = 1920
-    @AppStorage(Feedback.hapticKey) private var feedbackHaptic = true
-    @AppStorage(Feedback.soundKey) private var feedbackSound = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1656,11 +1654,6 @@ struct SettingsView: View {
                     .fixedSize()
                 }
 
-                Toggle("Haptic feedback", isOn: $feedbackHaptic)
-                Toggle("Sound", isOn: $feedbackSound)
-                Text("Plays when the pointer moves to another wedge.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
 
             Divider()
