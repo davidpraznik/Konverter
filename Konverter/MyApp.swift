@@ -228,16 +228,11 @@ enum Converter {
         guard let destination = CGImageDestinationCreateWithURL(dest as CFURL, type as CFString, 1, nil) else { return false }
         var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
         if keepMetadata {
-            if let small = downscaled(source, maxSide: maxSide) {
-                // Pomanjšana slika je že zasukana, zato orientacijo in dimenzije odstranimo iz metapodatkov
+            // Pri pomanjšanju slike ne zasukamo: orientacijska oznaka ostane, da se ujema z gain map
+            if let small = downscaled(source, maxSide: maxSide, applyOrientation: false) {
                 if var props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
                     props.removeValue(forKey: kCGImagePropertyPixelWidth)
                     props.removeValue(forKey: kCGImagePropertyPixelHeight)
-                    props[kCGImagePropertyOrientation] = 1
-                    if var tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
-                        tiff[kCGImagePropertyTIFFOrientation] = 1
-                        props[kCGImagePropertyTIFFDictionary] = tiff
-                    }
                     if var exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
                         exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
                         exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
@@ -250,6 +245,10 @@ enum Converter {
             } else {
                 CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
             }
+            // HDR gain map (iPhone fotografije) ImageIO sam ne prenese, brez nje je slika temnejša
+            if let gain = CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) {
+                CGImageDestinationAddAuxiliaryDataInfo(destination, kCGImageAuxiliaryDataTypeHDRGainMap, gain)
+            }
         } else {
             guard let image = loadImage(source) else { return false }
             CGImageDestinationAddImage(destination, image, options as CFDictionary)
@@ -258,7 +257,7 @@ enum Converter {
     }
 
     // Pomanjša sliko, če je njena najdaljša stranica večja od maxSide (0 = brez omejitve)
-    nonisolated private static func downscaled(_ source: CGImageSource, maxSide: Int) -> CGImage? {
+    nonisolated private static func downscaled(_ source: CGImageSource, maxSide: Int, applyOrientation: Bool = true) -> CGImage? {
         guard maxSide > 0,
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let w = props[kCGImagePropertyPixelWidth] as? Int,
@@ -266,7 +265,7 @@ enum Converter {
               max(w, h) > maxSide else { return nil }
         let opts: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceCreateThumbnailWithTransform: applyOrientation,
             kCGImageSourceShouldCacheImmediately: true,
             kCGImageSourceThumbnailMaxPixelSize: maxSide
         ]
