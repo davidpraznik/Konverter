@@ -1385,6 +1385,8 @@ struct SettingsView: View {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
+    private var mouseMonitor: Any?
+    private var alwaysPolling = false
     private var panel: NSPanel?
     private let model = WheelModel()
     private var baselineCount = NSPasteboard(name: .drag).changeCount
@@ -1414,11 +1416,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         registerFonts()
         Task { @MainActor in UpdateChecker.shared.start() }
+        // Timer teče samo, dokler je levi gumb miške pritisnjen (prej stalno, 33x/s).
+        mouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseDown) { [weak self] _ in
+            self?.startPolling()
+        }
+        // Če monitor ni na voljo, ostane stalno spraševanje kot prej.
+        if mouseMonitor == nil {
+            alwaysPolling = true
+            startPolling()
+        }
+    }
+
+    private func startPolling() {
+        guard timer == nil else { return }
+        baselineCount = NSPasteboard(name: .drag).changeCount
         let t = Timer(timeInterval: 0.03, repeats: true) { [weak self] _ in
             self?.tick()
         }
+        t.tolerance = 0.01
         RunLoop.main.add(t, forMode: .common)
         timer = t
+    }
+
+    private func stopPolling() {
+        timer?.invalidate()
+        timer = nil
     }
 
     private func tick() {
@@ -1428,7 +1450,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !pressed {
             baselineCount = pb.changeCount
             shiftSince = nil
-            if wheelVisible { scheduleHide() }
+            if wheelVisible {
+                scheduleHide()
+            } else if !alwaysPolling {
+                stopPolling()
+            }
             return
         }
 
