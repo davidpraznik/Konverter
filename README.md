@@ -4,7 +4,7 @@
 
 <p align="center">
   Hold <b>⇧ Shift</b> while dragging a file to convert it, <b>⌘ Command</b> to prepare images for the web or strip metadata.<br>
-  Lives in your menu bar and uses practically no energy while you are not dragging a file. The result is saved next to the original.
+  Lives in your menu bar and is built to be energy efficient: it only does work while you are using it. The result is saved next to the original.
 </p>
 
 <p align="center">
@@ -13,9 +13,9 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/licence-MIT-6D4AFF" alt="MIT licence"></a>
 </p>
 
-## Light on your Mac
+## Energy efficient
 
-Konverter does nothing in the background while you work. Its drag detection starts only when you press the mouse button and stops as soon as you release it, so an idle Konverter shows no activity in Activity Monitor and does not drain the battery. It uses CPU only for the moment of a conversion.
+Konverter is optimised for low energy use. It only listens for a mouse press. Drag detection runs only while the mouse button is held down and stops as soon as you release it, and the CPU is busy only for the moment of a conversion. Apart from the optional update check (once a day), nothing runs in the background, so an idle Konverter does not drain your battery.
 
 ## Formats
 
