@@ -224,16 +224,53 @@ enum Converter {
 
     // MARK: Orodja (kolo Command)
 
-    nonisolated private static func encode(_ source: CGImageSource, to dest: URL, type: String, quality: Double, keepMetadata: Bool) -> Bool {
+    nonisolated private static func encode(_ source: CGImageSource, to dest: URL, type: String, quality: Double, keepMetadata: Bool, maxSide: Int = 0) -> Bool {
         guard let destination = CGImageDestinationCreateWithURL(dest as CFURL, type as CFString, 1, nil) else { return false }
-        let options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
         if keepMetadata {
-            CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
+            if let small = downscaled(source, maxSide: maxSide) {
+                // Pomanjšana slika je že zasukana, zato orientacijo in dimenzije odstranimo iz metapodatkov
+                if var props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+                    props.removeValue(forKey: kCGImagePropertyPixelWidth)
+                    props.removeValue(forKey: kCGImagePropertyPixelHeight)
+                    props[kCGImagePropertyOrientation] = 1
+                    if var tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+                        tiff[kCGImagePropertyTIFFOrientation] = 1
+                        props[kCGImagePropertyTIFFDictionary] = tiff
+                    }
+                    if var exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+                        exif.removeValue(forKey: kCGImagePropertyExifPixelXDimension)
+                        exif.removeValue(forKey: kCGImagePropertyExifPixelYDimension)
+                        props[kCGImagePropertyExifDictionary] = exif
+                    }
+                    for (k, v) in props { options[k] = v }
+                    options[kCGImageDestinationLossyCompressionQuality] = quality
+                }
+                CGImageDestinationAddImage(destination, small, options as CFDictionary)
+            } else {
+                CGImageDestinationAddImageFromSource(destination, source, 0, options as CFDictionary)
+            }
         } else {
             guard let image = loadImage(source) else { return false }
             CGImageDestinationAddImage(destination, image, options as CFDictionary)
         }
         return CGImageDestinationFinalize(destination)
+    }
+
+    // Pomanjša sliko, če je njena najdaljša stranica večja od maxSide (0 = brez omejitve)
+    nonisolated private static func downscaled(_ source: CGImageSource, maxSide: Int) -> CGImage? {
+        guard maxSide > 0,
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let w = props[kCGImagePropertyPixelWidth] as? Int,
+              let h = props[kCGImagePropertyPixelHeight] as? Int,
+              max(w, h) > maxSide else { return nil }
+        let opts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary)
     }
 
     // Datoteke, ki jih ni mogoče bolj stisniti (rezultat ni manjši od originala)
@@ -275,19 +312,37 @@ enum Converter {
     }
 
     nonisolated private static func compressImage(_ url: URL) -> Bool {
+        let dest = uniqueURL(for: url, ext: url.pathExtension.lowercased(), suffix: "-compressed")
+        guard compressImage(url, to: dest) else { return false }
+        if CompressionSettings.result == .replace {
+            // Original gre v koš, stisnjena datoteka prevzame njegovo ime. Če karkoli spodleti, ostane stisnjena datoteka ob originalu.
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                try FileManager.default.moveItem(at: dest, to: url)
+            } catch {
+                return true
+            }
+        }
+        return true
+    }
+
+    nonisolated private static func compressImage(_ url: URL, to dest: URL) -> Bool {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return false }
         let ext = url.pathExtension.lowercased()
-        let dest = uniqueURL(for: url, ext: ext, suffix: "-compressed")
+        let quality = CompressionSettings.quality
+        let maxSide = CompressionSettings.maxSide
         switch ext {
         case "jpg", "jpeg":
-            return keepIfSmaller(encode(source, to: dest, type: "public.jpeg", quality: 0.7, keepMetadata: true), dest: dest, original: url)
+            return keepIfSmaller(encode(source, to: dest, type: "public.jpeg", quality: quality.jpg, keepMetadata: true, maxSide: maxSide), dest: dest, original: url)
         case "heic", "heif":
-            return keepIfSmaller(encode(source, to: dest, type: "public.heic", quality: 0.6, keepMetadata: true), dest: dest, original: url)
+            return keepIfSmaller(encode(source, to: dest, type: "public.heic", quality: quality.heic, keepMetadata: true, maxSide: maxSide), dest: dest, original: url)
         case "webp":
-            guard let image = loadImage(source), let data = encodeWebP(image, quality: 70) else { return false }
+            guard let image = downscaled(source, maxSide: maxSide) ?? loadImage(source),
+                  let data = encodeWebP(image, quality: quality.webp) else { return false }
             return keepIfSmaller((try? data.write(to: dest)) != nil, dest: dest, original: url)
         case "png":
-            guard let image = loadImage(source), let data = PNGCompressor.compress(image) else { return false }
+            guard let image = downscaled(source, maxSide: maxSide) ?? loadImage(source),
+                  let data = PNGCompressor.compress(image) else { return false }
             let original = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
             guard original == 0 || data.count < original else { noteSkipped(); return false } // ni manjši: ne shranimo
             return (try? data.write(to: dest)) != nil
@@ -1320,10 +1375,91 @@ enum ToolsKey: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Nastavitve kompresije
+
+enum CompressionQuality: String, CaseIterable, Identifiable {
+    case smaller, balanced, better
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .smaller: return "Smaller"
+        case .balanced: return "Balanced"
+        case .better: return "Better"
+        }
+    }
+
+    // Vrednosti Balanced so enake kot pred uvedbo nastavitev
+    var jpg: Double {
+        switch self {
+        case .smaller: return 0.5
+        case .balanced: return 0.7
+        case .better: return 0.85
+        }
+    }
+
+    var heic: Double {
+        switch self {
+        case .smaller: return 0.45
+        case .balanced: return 0.6
+        case .better: return 0.8
+        }
+    }
+
+    var webp: Float {
+        switch self {
+        case .smaller: return 55
+        case .balanced: return 70
+        case .better: return 85
+        }
+    }
+}
+
+enum CompressionResult: String, CaseIterable, Identifiable {
+    case nextToOriginal, replace
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .nextToOriginal: return "Save next to original"
+        case .replace: return "Replace original"
+        }
+    }
+}
+
+enum CompressionSettings {
+    static let qualityKey = "compressionQuality"
+    static let maxSideKey = "compressionMaxSide"
+    static let resultKey = "compressionResult"
+
+    // Dovoljene vrednosti za najdaljšo stranico (0 = originalna velikost)
+    static let maxSideOptions = [0, 3840, 2560, 1920, 1280]
+
+    static func maxSideLabel(_ v: Int) -> String { v == 0 ? "Original size" : "\(v) px" }
+
+    static var quality: CompressionQuality {
+        CompressionQuality(rawValue: UserDefaults.standard.string(forKey: qualityKey) ?? "") ?? .balanced
+    }
+
+    static var maxSide: Int {
+        let v = UserDefaults.standard.integer(forKey: maxSideKey)
+        return maxSideOptions.contains(v) ? v : 0
+    }
+
+    static var result: CompressionResult {
+        CompressionResult(rawValue: UserDefaults.standard.string(forKey: resultKey) ?? "") ?? .nextToOriginal
+    }
+}
+
 struct SettingsView: View {
     @StateObject private var model = SettingsModel()
     @ObservedObject private var updates = UpdateChecker.shared
     @AppStorage(ToolsKey.storageKey) private var toolsKey = ToolsKey.command.rawValue
+    @AppStorage(CompressionSettings.qualityKey) private var compressionQuality = CompressionQuality.balanced.rawValue
+    @AppStorage(CompressionSettings.maxSideKey) private var compressionMaxSide = 0
+    @AppStorage(CompressionSettings.resultKey) private var compressionResult = CompressionResult.nextToOriginal.rawValue
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -1346,6 +1482,62 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("COMPRESSION")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Quality").frame(width: 72, alignment: .leading)
+                    Picker("Quality", selection: $compressionQuality) {
+                        ForEach(CompressionQuality.allCases) { q in
+                            Text(q.label).tag(q.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                }
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Max size").frame(width: 72, alignment: .leading)
+                    Picker("Max size", selection: $compressionMaxSide) {
+                        ForEach(CompressionSettings.maxSideOptions, id: \.self) { v in
+                            Text(CompressionSettings.maxSideLabel(v)).tag(v)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text("Longest side in pixels. Smaller images are never enlarged.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 80)
+
+                HStack(alignment: .firstTextBaseline) {
+                    Text("Result").frame(width: 72, alignment: .leading)
+                    Picker("Result", selection: $compressionResult) {
+                        ForEach(CompressionResult.allCases) { r in
+                            Text(r.label).tag(r.rawValue)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                Text(compressionResult == CompressionResult.replace.rawValue
+                     ? "The original is moved to the Trash. If the result is not smaller, nothing changes."
+                     : "Adds \"-compressed\" to the name. If the result is not smaller, nothing is saved.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 80)
+            }
+
+            Divider()
 
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
@@ -1377,7 +1569,7 @@ struct SettingsView: View {
             }
         }
         .padding(24)
-        .frame(width: 340)
+        .frame(width: 380)
     }
 }
 
