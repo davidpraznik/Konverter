@@ -131,8 +131,7 @@ enum Tool: String, CaseIterable {
     var formats: String {
         switch self {
         case .web:
-            let size = WebSettings.maxSide == 0 ? "ORIGINAL" : "\(WebSettings.maxSide) PX"
-            return WebSettings.srgb ? "\(size) · SRGB" : size
+            return WebSettings.maxSide == 0 ? "SAME SIZE" : "TO \(WebSettings.maxSide) PX"
         case .strip: return "JPG · PNG\nHEIC · WEBP"
         }
     }
