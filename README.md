@@ -55,7 +55,7 @@ Menu bar icon, Settings…
 - **For web**: max size (original, 3840, 2560, 1920, 1600, 1280, 1024 or 800 px), quality (Smaller, Balanced, Better), convert to sRGB, remove metadata, and whether the result is saved next to the original or replaces it.
 
 <p align="center">
-  <img src="docs/settings-v1.png" alt="Konverter Settings window" width="380">
+  <img src="docs/settings-v1-light-dark-transparent.png" alt="Konverter Settings window in light and dark appearance" width="860">
 </p>
 
 ## Tools key
